@@ -546,7 +546,7 @@ public class RolapHierarchy extends HierarchyBase {
 
     boolean tableExists(String tableName) {
         RolapDimension rolapDimension = (RolapDimension)this.getDimension();
-        return (rolapDimension.xmlCubeDimension.table != null && rolapDimension.xmlCubeDimension.table.equals(tableName))
+        return (rolapDimension.xmlCubeDimension != null && rolapDimension.xmlCubeDimension.table != null && rolapDimension.xmlCubeDimension.table.equals(tableName))
                 ||
                 ((relation != null) && getTable(tableName, relation) != null);
     }
