@@ -19,7 +19,7 @@ import mondrian.olap.*;
 import mondrian.olap.fun.FunDefBase;
 import mondrian.resource.MondrianResource;
 import mondrian.rolap.aggmatcher.ExplicitRules;
-import mondrian.rolap.cache.SoftSmartCache;
+import mondrian.rolap.cache.StrongSmartCache;
 import mondrian.rolap.format.FormatterCreateContext;
 import mondrian.rolap.format.FormatterFactory;
 import mondrian.server.Locus;
@@ -65,9 +65,9 @@ public class RolapCube extends CubeBase {
     /**
      * Role-based cache of calculated members
      */
-    private final SoftSmartCache<Role, List<Member>>
+    private final StrongSmartCache<Role, List<Member>>
         roleToAccessibleCalculatedMembers =
-        new SoftSmartCache<Role, List<Member>>();
+        new StrongSmartCache<Role, List<Member>>();
 
     /**
      * List of named sets.

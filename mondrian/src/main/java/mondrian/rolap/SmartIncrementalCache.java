@@ -26,7 +26,7 @@ public class SmartIncrementalCache<K, V extends Collection> {
     SmartCache<K, V> cache;
 
     public SmartIncrementalCache() {
-        cache = new SoftSmartCache<K, V>();
+        cache = new StrongSmartCache<K, V>();
     }
 
     public V put(final K  key, final V value) {

@@ -71,9 +71,9 @@ public class MemberCacheHelper implements MemberCache {
         this.mapLevelToMembers =
             new SmartMemberListCache<RolapLevel, List<RolapMember>>();
         this.mapKeyToMember =
-            new SoftSmartCache<Object, RolapMember>();
+            new StrongSmartCache<Object, RolapMember>();
         this.mapNameToMember =
-                new SoftSmartCache<Object, RolapMember>();
+                new StrongSmartCache<Object, RolapMember>();
         this.mapMemberToChildren =
             new SmartMemberListCache<RolapMember, List<RolapMember>>();
         this.mapParentToNamedChildren =

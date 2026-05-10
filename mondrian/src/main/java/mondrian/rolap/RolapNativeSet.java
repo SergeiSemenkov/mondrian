@@ -29,7 +29,7 @@ import mondrian.rolap.TupleReader.MemberBuilder;
 import mondrian.rolap.aggmatcher.AggStar;
 import mondrian.rolap.cache.HardSmartCache;
 import mondrian.rolap.cache.SmartCache;
-import mondrian.rolap.cache.SoftSmartCache;
+import mondrian.rolap.cache.StrongSmartCache;
 
 import mondrian.rolap.sql.CrossJoinArg;
 import mondrian.rolap.sql.CrossJoinArgFactory;
@@ -69,7 +69,7 @@ public abstract class RolapNativeSet extends RolapNative {
     LogManager.getLogger( RolapNativeSet.class );
 
   private SmartCache<Object, TupleList> cache =
-    new SoftSmartCache<Object, TupleList>();
+    new StrongSmartCache<Object, TupleList>();
 
   /**
    * Returns whether certain member types (e.g. calculated members) should disable native SQL evaluation for
@@ -472,7 +472,7 @@ public abstract class RolapNativeSet extends RolapNative {
     if ( hard ) {
       cache = new HardSmartCache();
     } else {
-      cache = new SoftSmartCache();
+      cache = new StrongSmartCache();
     }
   }
 

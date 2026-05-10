@@ -12,7 +12,7 @@
 package mondrian.rolap;
 
 import mondrian.rolap.cache.SmartCache;
-import mondrian.rolap.cache.SoftSmartCache;
+import mondrian.rolap.cache.StrongSmartCache;
 import mondrian.rolap.sql.SqlConstraint;
 import mondrian.util.Pair;
 
@@ -52,7 +52,7 @@ public class SmartMemberListCache <K, V> {
     SmartCache<Pair<K, Object>, V> cache;
 
     public SmartMemberListCache() {
-        cache = new SoftSmartCache<Pair<K, Object>, V>();
+        cache = new StrongSmartCache<Pair<K, Object>, V>();
     }
 
     public Object put(K key, SqlConstraint constraint, V value) {
