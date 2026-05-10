@@ -58,6 +58,7 @@ public class RedisSegmentCache implements SegmentCache {
     };
 
     private Thread subscriberThread;
+    private volatile Jedis subscriberJedis;
     private volatile boolean running = true;
 
     private final String id = UUID.randomUUID().toString();
@@ -258,17 +259,32 @@ public class RedisSegmentCache implements SegmentCache {
     public void tearDown() {
         running = false;
         try {
-            if (subscriber != null) {
-                subscriber.unsubscribe();
-            }
+            subscriber.unsubscribe();
         } catch (Exception e) {
             LOGGER.log(Level.FINE, "Error unsubscribing", e);
         }
+
+        // Close the dedicated subscribe connection to unblock Jedis.subscribe().
+        try {
+            Jedis jedis = subscriberJedis;
+            if (jedis != null) {
+                jedis.close();
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Error closing subscriber Jedis", e);
+        }
+
         if (subscriberThread != null) {
             try {
                 subscriberThread.interrupt();
-                subscriberThread.join(2000);
-            } catch (InterruptedException ignored) { }
+                subscriberThread.join(5000);
+                if (subscriberThread.isAlive()) {
+                    LOGGER.log(Level.WARNING,
+                        "Redis subscriber thread did not stop within timeout");
+                }
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
         }
         try {
             pool.close();
@@ -313,16 +329,20 @@ public class RedisSegmentCache implements SegmentCache {
         subscriberThread = new Thread(new Runnable() {
             public void run() {
                 try (Jedis jedis = pool.getResource()) {
-                    // blocks until unsubscribed
+                    subscriberJedis = jedis;
+                    // blocks until unsubscribed/connection closed
                     jedis.subscribe(subscriber, EVENTS_CHANNEL);
                 } catch (Exception e) {
                     if (running) {
                         LOGGER.log(Level.WARNING, "Redis subscriber exited unexpectedly", e);
                     }
+                } finally {
+                    subscriberJedis = null;
                 }
             }
         }, "RedisSegmentCache-Subscriber");
         subscriberThread.setDaemon(true);
+        subscriberThread.setContextClassLoader(null);
         subscriberThread.start();
     }
 
