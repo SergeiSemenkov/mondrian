@@ -29,7 +29,6 @@ import org.apache.logging.log4j.LogManager;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.lang.ref.SoftReference;
 import java.sql.Connection;
 import java.sql.*;
 import java.util.*;
@@ -147,7 +146,7 @@ public class RolapStar {
         AggregationKey aggregationKey = new AggregationKey(request);
 
         final Bar bar = localBars.get();
-        for (SegmentWithData segment : Util.GcIterator.over(bar.segmentRefs)) {
+        for (SegmentWithData segment : localBars.get().segments) {
             if (!segment.getConstrainedColumnsBitKey().equals(
                     request.getConstrainedColumnsBitKey()))
             {
@@ -191,8 +190,7 @@ public class RolapStar {
     }
 
     public void register(SegmentWithData segment) {
-        localBars.get().segmentRefs.add(
-            new SoftReference<SegmentWithData>(segment));
+        localBars.get().segments.add(segment);
     }
 
     public RolapStatisticsCache getStatisticsCache() {
@@ -211,8 +209,8 @@ public class RolapStar {
         private final Map<AggregationKey, Aggregation> aggregations =
             new ReferenceMap(ReferenceMap.WEAK, ReferenceMap.WEAK);
 
-        private final List<SoftReference<SegmentWithData>> segmentRefs =
-            new ArrayList<SoftReference<SegmentWithData>>();
+        private final List<SegmentWithData> segments =
+            new ArrayList<SegmentWithData>();
     }
 
     private final ThreadLocal<Bar> localBars =
@@ -552,7 +550,7 @@ public class RolapStar {
 
             // Clear aggregation cache for the current thread context.
             localBars.get().aggregations.clear();
-            localBars.get().segmentRefs.clear();
+            localBars.get().segments.clear();
         }
     }
 

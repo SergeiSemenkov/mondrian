@@ -11,7 +11,6 @@ package mondrian.rolap.cache;
 
 import mondrian.spi.*;
 
-import java.lang.ref.SoftReference;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -28,17 +27,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class MemorySegmentCache implements SegmentCache {
     // Use a thread-safe map because the SegmentCache
     // interface requires thread safety.
-    private final Map<SegmentHeader, SoftReference<SegmentBody>> map =
-        new ConcurrentHashMap<SegmentHeader, SoftReference<SegmentBody>>();
+    private final Map<SegmentHeader, SegmentBody> map =
+        new ConcurrentHashMap<SegmentHeader, SegmentBody>();
     private final List<SegmentCacheListener> listeners =
         new CopyOnWriteArrayList<SegmentCacheListener>();
 
     public SegmentBody get(SegmentHeader header) {
-        final SoftReference<SegmentBody> ref = map.get(header);
-        if (ref == null) {
-            return null;
-        }
-        final SegmentBody body = ref.get();
+        final SegmentBody body = map.get(header);
         if (body == null) {
             map.remove(header);
         }
@@ -46,11 +41,7 @@ public class MemorySegmentCache implements SegmentCache {
     }
 
     public boolean contains(SegmentHeader header) {
-        final SoftReference<SegmentBody> ref = map.get(header);
-        if (ref == null) {
-            return false;
-        }
-        final SegmentBody body = ref.get();
+        final SegmentBody body = map.get(header);
         if (body == null) {
             map.remove(header);
             return false;
@@ -67,7 +58,7 @@ public class MemorySegmentCache implements SegmentCache {
         // and throwing an exception?
         assert header != null;
         assert body != null;
-        map.put(header, new SoftReference<SegmentBody>(body));
+        map.put(header, body);
         fireSegmentCacheEvent(
             new SegmentCache.SegmentCacheListener.SegmentCacheEvent() {
                 public boolean isLocal() {

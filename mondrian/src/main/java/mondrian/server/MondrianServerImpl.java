@@ -521,7 +521,13 @@ public class MondrianServerImpl
     public List<Statement> getStatements(String sessionId) {
         List<Statement> result = new ArrayList<Statement>();
         for(Statement statement: statementMap.values()) {
-            if(sessionId == null || statement.getMondrianConnection().getConnectInfo().get("sessionId").equals(sessionId)) {
+            if(sessionId == null
+                    ||
+                    (
+                            statement.getMondrianConnection().getConnectInfo().get("sessionId") != null
+                            && statement.getMondrianConnection().getConnectInfo().get("sessionId").equals(sessionId)
+                    )
+            ) {
                 result.add(statement);
             }
         }

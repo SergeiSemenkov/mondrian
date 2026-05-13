@@ -117,6 +117,12 @@ public class Session
         Session session = sessions.get(sessionId);
         shutdownCacheManager(session);
 
+        for(MondrianServerImpl mondrianServerImpl: mondrian.server.MondrianServerImpl.getServers()) {
+            for(Statement statement: mondrianServerImpl.getStatements(sessionId)) {
+                mondrianServerImpl.removeStatement(statement);
+            }
+        }
+
         sessions.remove(sessionId);
         mondrian.metrics.SessionMetrics.setSessionCount(sessions.size());
     }
