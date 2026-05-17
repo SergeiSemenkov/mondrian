@@ -2455,57 +2455,8 @@ public class Query extends QueryPart {
 
             for (QueryAxis axis : axes) {
                 Exp axisExp = axis.getSet();
-                if (axisExp instanceof FunCall) {
-                    FunCall funCall = (FunCall) axisExp;
-                    if (funCall.getFunName().equals("()")) {
-                        for (Exp argExp : funCall.getArgs()) {
-                            if (argExp instanceof FunCall) {
-                                FunCall setFunCall = (FunCall) argExp;
-                                if (setFunCall.getFunName().equals("{}")) {
-                                    addSetToSubcubePredicates(baseCube, listOfSubcubeSets, setFunCall, false);
-                                } else if (setFunCall.getFunName().equals("-")) {
-                                    // Negated set: -{...}
-                                    Exp inner = setFunCall.getArg(0);
-                                    if (inner instanceof FunCall
-                                        && ((FunCall) inner).getFunName().equals("{}"))
-                                    {
-                                        addSetToSubcubePredicates(
-                                            baseCube, listOfSubcubeSets,
-                                            (FunCall) inner, true);
-                                    } else {
-                                        throw new UnsupportedOperationException(
-                                            "Unsupported negated expression in subcube axis: "
-                                            + inner);
-                                    }
-                                } else {
-                                    throw new UnsupportedOperationException(
-                                        "Unsupported function in subcube axis: "
-                                        + setFunCall.getFunName());
-                                }
-                            }
-                        }
-                    } else if (funCall.getFunName().equals("{}")) {
-                        addSetToSubcubePredicates(baseCube, listOfSubcubeSets, funCall, false);
-                    } else if (funCall.getFunName().equals("-")) {
-                        // Negated set at top level: -{...}
-                        Exp inner = funCall.getArg(0);
-                        if (inner instanceof FunCall
-                            && ((FunCall) inner).getFunName().equals("{}"))
-                        {
-                            addSetToSubcubePredicates(
-                                baseCube, listOfSubcubeSets,
-                                (FunCall) inner, true);
-                        } else {
-                            throw new UnsupportedOperationException(
-                                "Unsupported negated expression in subcube axis: "
-                                + inner);
-                        }
-                    } else {
-                        throw new UnsupportedOperationException(
-                            "Unsupported function in subcube axis: "
-                            + funCall.getFunName());
-                    }
-                }
+                addSetExpressionToSubcubePredicates(
+                    baseCube, listOfSubcubeSets, axisExp, false);
             }
 
             subcube = subcube.getSubcube();
@@ -2526,6 +2477,121 @@ public class Query extends QueryPart {
         }
         return null;
     }
+
+    private void addSetExpressionToSubcubePredicates(
+        RolapCube baseCube,
+        List<StarPredicate> listOfSubcubeSets,
+        Exp exp,
+        boolean negated)
+    {
+        if (!(exp instanceof FunCall)) {
+            throw new UnsupportedOperationException(
+                "Unsupported expression type in subcube axis: "
+                + exp.getClass().getName() + " -> " + exp);
+        }
+
+        FunCall funCall = (FunCall) exp;
+        String funName = funCall.getFunName();
+
+        if (funName.equals("()")) {
+            for (Exp argExp : funCall.getArgs()) {
+                addSetExpressionToSubcubePredicates(
+                    baseCube, listOfSubcubeSets, argExp, negated);
+            }
+        } else if (funName.equals("{}")) {
+            addSetToSubcubePredicates(baseCube, listOfSubcubeSets, funCall, negated);
+        } else if (funName.equals("-")) {
+            addSetExpressionToSubcubePredicates(
+                baseCube, listOfSubcubeSets, funCall.getArg(0), !negated);
+        } else if (funName.equalsIgnoreCase("CrossJoin")) {
+            if (funCall.getArgCount() != 2) {
+                throw new UnsupportedOperationException(
+                    "CrossJoin in subcube must have 2 args: " + funCall);
+            }
+            addSetExpressionToSubcubePredicates(
+                baseCube, listOfSubcubeSets, funCall.getArg(0), negated);
+            addSetExpressionToSubcubePredicates(
+                baseCube, listOfSubcubeSets, funCall.getArg(1), negated);
+        } else if (funName.equalsIgnoreCase("Filter")) {
+            addFilterToSubcubePredicates(
+                baseCube, listOfSubcubeSets, funCall, negated);
+        } else if (funName.equalsIgnoreCase("AllMembers")
+            || funName.equalsIgnoreCase("Members")
+            || funName.equalsIgnoreCase("Children")
+            || funName.equalsIgnoreCase("Descendants"))
+        {
+            // These functions mean "all/descendants of members in this
+            // hierarchy" — no dimension restriction to add as a predicate.
+            // Simply skip; the dimension is unrestricted.
+        } else {
+            throw new UnsupportedOperationException(
+                "Unsupported function in subcube axis: " + funName);
+        }
+    }
+
+    private void addFilterToSubcubePredicates(
+        RolapCube baseCube,
+        List<StarPredicate> listOfSubcubeSets,
+        FunCall filterFunCall,
+        boolean negated)
+    {
+        if (filterFunCall.getArgCount() != 2) {
+            throw new UnsupportedOperationException(
+                "Filter in subcube must have 2 args: " + filterFunCall);
+        }
+
+        final Exp setExp = filterFunCall.getArg(0);
+        final Exp conditionExp = filterFunCall.getArg(1);
+
+        // Keep supported conditions explicit to avoid silently accepting
+        // non-pushdownable filter semantics.
+        if (!isSupportedNonEmptyFilterCondition(conditionExp)) {
+            throw new UnsupportedOperationException(
+                "Unsupported Filter condition in subcube axis: " + conditionExp);
+        }
+
+        addSetExpressionToSubcubePredicates(
+            baseCube, listOfSubcubeSets, setExp, negated);
+    }
+
+    /**
+     * Recursively validates that a Filter condition is composed only of
+     * IsEmpty checks combined with NOT/OR/AND/parentheses.
+     * Such conditions cannot be pushed down to SQL StarPredicate, but are
+     * safe to accept — the set-side predicate is extracted from the first
+     * Filter argument, and this condition is evaluated at MDX runtime.
+     *
+     * Examples accepted:
+     *   NOT IsEmpty([Measures].[X])
+     *   (NOT IsEmpty([Measures].[X])) OR (NOT IsEmpty([Measures].[Y]))
+     *   ((NOT IsEmpty([A])) OR (NOT IsEmpty([B]))) OR (NOT IsEmpty([C]))
+     */
+    private boolean isSupportedNonEmptyFilterCondition(Exp conditionExp) {
+        if (!(conditionExp instanceof FunCall)) {
+            return false;
+        }
+        FunCall fc = (FunCall) conditionExp;
+        String name = fc.getFunName();
+
+        if (name.equalsIgnoreCase("IsEmpty")) {
+            return fc.getArgCount() == 1;
+        }
+        if (name.equalsIgnoreCase("NOT") && fc.getArgCount() == 1) {
+            return isSupportedNonEmptyFilterCondition(fc.getArg(0));
+        }
+        if ((name.equalsIgnoreCase("OR") || name.equalsIgnoreCase("AND"))
+            && fc.getArgCount() == 2)
+        {
+            return isSupportedNonEmptyFilterCondition(fc.getArg(0))
+                && isSupportedNonEmptyFilterCondition(fc.getArg(1));
+        }
+        // parenthesized expression — single-arg tuple wrapper "(expr)"
+        if (name.equals("()") && fc.getArgCount() == 1) {
+            return isSupportedNonEmptyFilterCondition(fc.getArg(0));
+        }
+        return false;
+    }
+
 
     private void addSetToSubcubePredicates(
         RolapCube baseCube,
