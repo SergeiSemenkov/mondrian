@@ -45,7 +45,7 @@ class ConnectionKey extends StringKey {
             s = connectionUuidStr;
         } else {
             final StringBuilder buf = new StringBuilder(100);
-            attributeValue(buf, "sessiomId", sessionId);
+            attributeValue(buf, "sessionId", sessionId);
             if (dataSource != null) {
                 attributeValue(buf, "jvm", Util.JVM_INSTANCE_UUID);
                 attributeValue(

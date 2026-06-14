@@ -246,26 +246,35 @@ public class RolapHierarchy extends HierarchyBase {
                 && xmlCubeDimension.table != null
                 && !xmlCubeDimension.table.isEmpty())
         {
-            // Try to find a View with the same alias as the table name
-            MondrianDef.View matchingView = null;
-            MondrianDef.Schema xmlSchema = getRolapSchema().getXMLSchema();
+            String tableId = xmlCubeDimension.table;
+            MondrianDef.Relation relation = null;
 
-            // Search only in Schema.views collection
-            if (xmlSchema.views != null) {
-                for (MondrianDef.View view : xmlSchema.views) {
-                    if (xmlCubeDimension.table.equals(view.alias)) {
-                        matchingView = view;
-                        break;
+            MondrianDef.Relation cubeRelation = (MondrianDef.Relation)cube.getFact();
+            if (cubeRelation != null && tableId.equals(cubeRelation.getAlias())
+                    || (cubeRelation instanceof MondrianDef.Table
+                    && tableId.equals(((MondrianDef.Table) cubeRelation).name)))
+            {
+                relation = cubeRelation;
+            }
+
+            if(relation == null) {
+                MondrianDef.Schema xmlSchema = getRolapSchema().getXMLSchema();
+                // Search only in Schema.views collection
+                if (xmlSchema.views != null) {
+                    for (MondrianDef.View view : xmlSchema.views) {
+                        if (tableId.equals(view.alias)) {
+                            relation = view;
+                            break;
+                        }
                     }
                 }
             }
 
-            // Set the relation - use the found View or create a new Table
-            if (matchingView != null) {
-                this.relation = matchingView;
+            if (relation != null) {
+                this.relation = relation;
             } else {
                 MondrianDef.Table table = new MondrianDef.Table();
-                table.name = xmlCubeDimension.table;
+                table.name = tableId;
                 this.relation = table;
             }
         }

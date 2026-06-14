@@ -367,8 +367,10 @@ public class RolapLevel extends LevelBase {
         caption = xmlLevel.caption;
         visible = xmlLevel.visible;
         nameExp = xmlLevel.getNameExp();
+        ordinalExp = xmlLevel.getOrdinalExp();
         flags = (xmlLevel.uniqueMembers ? FLAG_UNIQUE : 0);
         datatype = xmlLevel.getDatatype();
+        approxRowCount = xmlLevel.approxRowCount;
 
         if (sourceAttr != null) {
             // Get the table name from the cube dimension's table property
@@ -392,7 +394,12 @@ public class RolapLevel extends LevelBase {
             name = sourceAttr.name;
             description = sourceAttr.description;
             captionExp = null;
-            ordinalExp = null;
+            if (sourceAttr.orderByColumn != null) {
+                column = new MondrianDef.Column();
+                column.table = dimensionTable;
+                column.name = sourceAttr.orderByColumn.columnName;
+                ordinalExp = column;
+            }
             parentExp = null;
             nullParentValue = null;
             closure = null;
@@ -400,14 +407,13 @@ public class RolapLevel extends LevelBase {
             internalType = null;
             hideMemberCondition = HideMemberCondition.Never;
             levelType = LevelType.Regular;
-            approxRowCount = null;
             annotationMap = java.util.Collections.emptyMap();
+            datatype = Dialect.Datatype.valueOf(sourceAttr.keyColumn.dataType);
         } else {
             keyExp = xmlLevel.getKeyExp();
             name = xmlLevel.name;
             description = xmlLevel.description;
             captionExp = xmlLevel.getCaptionExp();
-            ordinalExp = xmlLevel.getOrdinalExp();
             parentExp = xmlLevel.getParentExp();
             nullParentValue = xmlLevel.nullParentValue;
             closure = xmlLevel.closure;
@@ -418,7 +424,6 @@ public class RolapLevel extends LevelBase {
                 xmlLevel.levelType.equals("TimeHalfYear")
                     ? "TimeHalfYears"
                     : xmlLevel.levelType);
-            approxRowCount = xmlLevel.approxRowCount;
             annotationMap = RolapHierarchy.createAnnotationMap(xmlLevel.annotations);
         }
 

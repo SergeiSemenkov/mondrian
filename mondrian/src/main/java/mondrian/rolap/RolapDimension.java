@@ -286,32 +286,6 @@ class RolapDimension extends DimensionBase {
                 xmlDimensionAttribute.attributeHierarchyVisible : true;
         xmlHierarchy.description = xmlDimensionAttribute.description;
 
-        String tableId = xmlCubeDimension.table;
-
-        // Try to find a View with the same alias as the table name
-        MondrianDef.View matchingView = null;
-        RolapSchema rolapSchema = (RolapSchema) schema;
-        MondrianDef.Schema xmlSchema = rolapSchema.getXMLSchema();
-
-        // Search only in Schema.views collection
-        if (xmlSchema.views != null) {
-            for (MondrianDef.View view : xmlSchema.views) {
-                if (tableId.equals(view.alias)) {
-                    matchingView = view;
-                    break;
-                }
-            }
-        }
-
-        // Set the relation - use the found View or create a new Table
-        if (matchingView != null) {
-            xmlHierarchy.relation = matchingView;
-        } else {
-            MondrianDef.Table table = new MondrianDef.Table();
-            table.name = tableId;
-            xmlHierarchy.relation = table;
-        }
-
         // Create single level for the attribute
         MondrianDef.Level levelDef = new MondrianDef.Level();
         levelDef.name = xmlDimensionAttribute.name;
@@ -323,9 +297,14 @@ class RolapDimension extends DimensionBase {
         levelDef.properties = new MondrianDef.Property[0];
         levelDef.description = xmlDimensionAttribute.description;
         levelDef.levelType = "Regular";
+        levelDef.approxRowCount = "1";
 
         if (xmlDimensionAttribute.nameColumn != null) {
             levelDef.nameColumn = xmlDimensionAttribute.nameColumn.columnName;
+        }
+
+        if (xmlDimensionAttribute.orderByColumn != null) {
+            levelDef.ordinalColumn = xmlDimensionAttribute.orderByColumn.columnName;
         }
 
         xmlHierarchy.levels = new MondrianDef.Level[] { levelDef };

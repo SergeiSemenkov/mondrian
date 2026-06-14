@@ -21,6 +21,7 @@ import mondrian.rolap.agg.AndPredicate;
 import mondrian.rolap.agg.MemberColumnPredicate;
 import mondrian.rolap.agg.NotPredicate;
 import mondrian.rolap.agg.OrPredicate;
+import mondrian.rolap.agg.LiteralStarPredicate;
 import mondrian.server.*;
 import mondrian.spi.ProfileHandler;
 import mondrian.util.ArrayStack;
@@ -2503,6 +2504,33 @@ public class Query extends QueryPart {
         } else if (funName.equals("-")) {
             addSetExpressionToSubcubePredicates(
                 baseCube, listOfSubcubeSets, funCall.getArg(0), !negated);
+        } else if (funName.equalsIgnoreCase("Head")) {
+            if (funCall.getArgCount() < 1 || funCall.getArgCount() > 2) {
+                throw new UnsupportedOperationException(
+                    "Head in subcube must have 1 or 2 args: " + funCall);
+            }
+
+            int headCount = Integer.MAX_VALUE;
+            if (funCall.getArgCount() == 2) {
+                headCount = extractNonNegativeHeadCount(funCall.getArg(1));
+                if (headCount == 0) {
+                    if (!negated) {
+                        listOfSubcubeSets.add(LiteralStarPredicate.FALSE);
+                    }
+                    // NOT Head(set, 0) means unrestricted set; add nothing.
+                    return;
+                }
+            }
+
+            Exp headSetExp = funCall.getArg(0);
+            if (headCount != Integer.MAX_VALUE
+                && headSetExp instanceof FunCall
+                && ((FunCall) headSetExp).getFunName().equals("{}"))
+            {
+                headSetExp = truncateSetFunCall((FunCall) headSetExp, headCount);
+            }
+            addSetExpressionToSubcubePredicates(
+                baseCube, listOfSubcubeSets, headSetExp, negated);
         } else if (funName.equalsIgnoreCase("CrossJoin")) {
             if (funCall.getArgCount() != 2) {
                 throw new UnsupportedOperationException(
@@ -2527,6 +2555,32 @@ public class Query extends QueryPart {
             throw new UnsupportedOperationException(
                 "Unsupported function in subcube axis: " + funName);
         }
+    }
+
+    private int extractNonNegativeHeadCount(Exp countExp) {
+        if (!(countExp instanceof Literal)
+            || ((Literal) countExp).getCategory() != Category.Numeric)
+        {
+            throw new UnsupportedOperationException(
+                "Head count in subcube must be a numeric literal: " + countExp);
+        }
+        int count = ((Literal) countExp).getIntValue();
+        if (count < 0) {
+            throw new UnsupportedOperationException(
+                "Head count in subcube cannot be negative: " + count);
+        }
+        return count;
+    }
+
+    private Exp truncateSetFunCall(FunCall setFunCall, int count) {
+        Exp[] setArgs = setFunCall.getArgs();
+        if (count >= setArgs.length) {
+            return setFunCall;
+        }
+        return new UnresolvedFunCall(
+            "{}",
+            Syntax.Braces,
+            Arrays.copyOf(setArgs, count));
     }
 
     private void addFilterToSubcubePredicates(

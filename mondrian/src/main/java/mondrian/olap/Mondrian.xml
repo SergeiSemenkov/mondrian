@@ -2688,6 +2688,9 @@ Revision is $Id$
         <Object name="keyColumn" type="KeyColumn">
             <Doc>The column that defines the key for the attribute.</Doc>
         </Object>
+        <Object name="orderByColumn" type="OrderByColumn">
+            <Doc>The column that defines how the attribute members are ordered.</Doc>
+        </Object>
         <Object name="nameColumn" type="NameColumn">
             <Doc>The column that provides the name for the attribute members.</Doc>
         </Object>
@@ -2754,6 +2757,7 @@ Revision is $Id$
 
     <!-- Aliases so XML uses <keyColumn/>, <nameColumn/>, <valueColumn/> -->
     <Element type="KeyColumn" class="DataItem"/>
+    <Element type="OrderByColumn" class="DataItem"/>
     <Element type="NameColumn" class="DataItem"/>
     <Element type="ValueColumn" class="DataItem"/>
 
