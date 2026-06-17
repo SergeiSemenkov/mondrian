@@ -16,6 +16,7 @@ import mondrian.calc.TupleList;
 import mondrian.calc.impl.DelegatingTupleList;
 import mondrian.olap.Access;
 import mondrian.olap.DelegatingSchemaReader;
+import mondrian.olap.Evaluator;
 import mondrian.olap.Hierarchy;
 import mondrian.olap.Level;
 import mondrian.olap.Member;
@@ -129,6 +130,31 @@ public abstract class RolapNativeSet extends RolapNative {
           }
         }
       }
+
+      // Apply subcube predicate to native set SQL.
+      final Evaluator evaluator = getEvaluator();
+      if ( evaluator instanceof RolapEvaluator ) {
+        final StarPredicate subcubePredicate =
+          ( (RolapEvaluator) evaluator ).getSubcubePredicate();
+        if ( subcubePredicate != null ) {
+          // Ensure the fact table and any constrained dimension tables are
+          // present in FROM/JOIN before rendering predicate SQL.
+          baseCube.getStar().getFactTable().addToFrom( sqlQuery, false, true );
+          for ( RolapStar.Column column
+            : subcubePredicate.getConstrainedColumnList() ) {
+            if ( column != null ) {
+              column.getTable().addToFrom( sqlQuery, false, true );
+            }
+          }
+
+          final StringBuilder buf = new StringBuilder();
+          subcubePredicate.toSql( sqlQuery, buf );
+          final String where = buf.toString();
+          if ( where.length() > 0 && !"true".equals( where ) ) {
+            sqlQuery.addWhere( where );
+          }
+        }
+      }
     }
 
     /**
@@ -160,6 +186,14 @@ public abstract class RolapNativeSet extends RolapNative {
     public Object getCacheKey() {
       List<Object> key = new ArrayList<Object>();
       key.add( super.getCacheKey() );
+      final Evaluator evaluator = getEvaluator();
+      if ( evaluator instanceof RolapEvaluator ) {
+        final StarPredicate subcubePredicate =
+          ( (RolapEvaluator) evaluator ).getSubcubePredicate();
+        if ( subcubePredicate != null ) {
+          key.add( subcubePredicate.toString() );
+        }
+      }
       // only add args that will be retrieved through native sql;
       // args that are sets with calculated members aren't executed
       // natively
@@ -561,6 +595,3 @@ public abstract class RolapNativeSet extends RolapNative {
     cache.clear();
   }
 }
-
-// End RolapNativeSet.java
-
