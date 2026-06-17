@@ -1836,6 +1836,30 @@ public class BuiltinFunTable extends FunTableImpl {
             }
         });
 
+        // <Logical Expression> = <Logical Expression>
+        builder.define(
+            new FunDefBase(
+                "=",
+                "Returns whether two logical expressions are equal.",
+                "ibbb")
+        {
+            public Calc compileCall(ResolvedFunCall call, ExpCompiler compiler)
+            {
+                final BooleanCalc calc0 =
+                    compiler.compileBoolean(call.getArg(0));
+                final BooleanCalc calc1 =
+                    compiler.compileBoolean(call.getArg(1));
+                return new AbstractBooleanCalc(call, new Calc[] {calc0, calc1})
+                {
+                    public boolean evaluateBoolean(Evaluator evaluator) {
+                        final boolean b0 = calc0.evaluateBoolean(evaluator);
+                        final boolean b1 = calc1.evaluateBoolean(evaluator);
+                        return b0 == b1;
+                    }
+                };
+            }
+        });
+
         // <String Expression> = <String Expression>
         builder.define(
             new FunDefBase(

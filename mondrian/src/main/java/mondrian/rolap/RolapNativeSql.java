@@ -154,6 +154,33 @@ public class RolapNativeSql {
     }
 
     /**
+     * Compiles a string literal to SQL.
+     */
+    class StringLiteralSqlCompiler implements SqlCompiler {
+        public String compile(Exp exp) {
+            if (!(exp instanceof Literal)) {
+                return null;
+            }
+            if ((exp.getCategory() & Category.String) == 0) {
+                return null;
+            }
+            Literal literal = (Literal) exp;
+            Object value = literal.getValue();
+            if (!(value instanceof String)) {
+                return null;
+            }
+            // Properly escape and quote the string for SQL
+            String stringValue = (String) value;
+            String escaped = stringValue.replace("'", "''");
+            return "'" + escaped + "'";
+        }
+
+        public String toString() {
+            return "StringLiteralSqlCompiler";
+        }
+    }
+
+    /**
      * Base class to remove MemberScalarExp.
      */
     abstract class MemberSqlCompiler implements SqlCompiler {
@@ -331,9 +358,8 @@ public class RolapNativeSql {
                     && rolapLevel instanceof RolapCubeLevel
                     && expression == rolapLevel.keyExp)
                 {
-                    int bitPos =
-                        ((RolapCubeLevel)rolapLevel).getStarKeyColumn()
-                            .getBitPosition();
+                    int bitPos = ((RolapCubeLevel)rolapLevel).getStarKeyColumn()
+                        .getBitPosition();
                     mondrian.rolap.aggmatcher.AggStar.Table.Column col =
                         aggStar.lookupColumn(bitPos);
                     if (col != null) {
@@ -619,6 +645,115 @@ public class RolapNativeSql {
     }
 
     /**
+     * Compiles a string property access like <code>CurrentMember.Name</code>
+     * or similar member property expressions that return strings.
+     */
+    class StringMemberPropertySqlCompiler extends MemberSqlCompiler {
+        public String compile(Exp exp) {
+            // Handle CurrentMember.Name pattern
+            if (!(exp instanceof ResolvedFunCall)) {
+                return null;
+            }
+            ResolvedFunCall call = (ResolvedFunCall) exp;
+            String funName = call.getFunName();
+
+            // Check if this is a string-returning property like Name or Caption
+            if (!"Name".equalsIgnoreCase(funName) && !"Caption".equalsIgnoreCase(funName)) {
+                return null;
+            }
+
+            if (!(exp.getType() instanceof StringType)) {
+                return null;
+            }
+
+            if (call.getArgCount() != 1) {
+                return null;
+            }
+
+            Exp memberExp = call.getArg(0);
+            if (!(memberExp instanceof ResolvedFunCall)) {
+                return null;
+            }
+
+            ResolvedFunCall memberCall = (ResolvedFunCall) memberExp;
+            if (!"CurrentMember".equalsIgnoreCase(memberCall.getFunName())) {
+                return null;
+            }
+
+            if (memberCall.getArgCount() != 1) {
+                return null;
+            }
+
+            // Get the hierarchy/level/dimension expression
+            final Exp dimExpr = memberCall.getArg(0);
+            final RolapCubeDimension dimension;
+
+            if (dimExpr instanceof DimensionExpr) {
+                dimension = (RolapCubeDimension) evaluator.getCachedResult(
+                    new ExpCacheDescriptor(dimExpr, evaluator));
+            } else if (dimExpr instanceof HierarchyExpr) {
+                final RolapCubeHierarchy hierarchy =
+                    (RolapCubeHierarchy) evaluator.getCachedResult(
+                        new ExpCacheDescriptor(dimExpr, evaluator));
+                dimension = (RolapCubeDimension) hierarchy.getDimension();
+            } else if (dimExpr instanceof LevelExpr) {
+                final RolapCubeLevel level =
+                    (RolapCubeLevel) evaluator.getCachedResult(
+                        new ExpCacheDescriptor(dimExpr, evaluator));
+                dimension = (RolapCubeDimension) level.getDimension();
+            } else {
+                return null;
+            }
+
+            if (rolapLevel != null && dimension.equals(rolapLevel.getDimension())) {
+                // We can use the rolapLevel to get the appropriate expression
+                final boolean useCaption = "Caption".equalsIgnoreCase(funName);
+                final MondrianDef.Expression expression = useCaption
+                    ? rolapLevel.captionExp == null
+                        ? rolapLevel.nameExp == null
+                            ? rolapLevel.keyExp
+                            : rolapLevel.nameExp
+                        : rolapLevel.captionExp
+                    : rolapLevel.nameExp == null
+                        ? rolapLevel.keyExp
+                        : rolapLevel.nameExp;
+
+                String sourceExp;
+                if (aggStar != null
+                    && rolapLevel instanceof RolapCubeLevel
+                    && expression == rolapLevel.keyExp)
+                {
+                    int bitPos = ((RolapCubeLevel)rolapLevel).getStarKeyColumn()
+                        .getBitPosition();
+                    mondrian.rolap.aggmatcher.AggStar.Table.Column col =
+                        aggStar.lookupColumn(bitPos);
+                    if (col != null) {
+                        sourceExp = col.generateExprString(sqlQuery);
+                    } else {
+                        rolapLevel.getHierarchy().addToFrom(sqlQuery, expression);
+                        sourceExp = expression.getExpression(sqlQuery);
+                    }
+                } else if (aggStar != null) {
+                    rolapLevel.getHierarchy().addToFrom(sqlQuery, expression);
+                    sourceExp = expression.getExpression(sqlQuery);
+                } else {
+                    sourceExp = expression.getExpression(sqlQuery);
+                }
+
+                if (dialect.requiresHavingAlias()) {
+                    sourceExp = sqlQuery.getAlias(sourceExp);
+                }
+                return sourceExp;
+            }
+            return null;
+        }
+
+        public String toString() {
+            return "StringMemberPropertySqlCompiler";
+        }
+    }
+
+    /**
      * Creates a RolapNativeSql.
      *
      * @param sqlQuery the query which is needed for different SQL dialects -
@@ -638,6 +773,9 @@ public class RolapNativeSql {
 
         numericCompiler = new CompositeSqlCompiler();
         booleanCompiler = new CompositeSqlCompiler();
+
+        // Create string compiler for string comparisons
+        CompositeSqlCompiler stringCompiler = new CompositeSqlCompiler();
 
         numericCompiler.add(new NumberSqlCompiler());
         numericCompiler.add(new StoredMeasureSqlCompiler());
@@ -659,6 +797,12 @@ public class RolapNativeSql {
         numericCompiler.add(
             new IifSqlCompiler(Category.Numeric, numericCompiler));
 
+        // Set up string compiler
+        stringCompiler.add(new StringLiteralSqlCompiler());
+        stringCompiler.add(new StringMemberPropertySqlCompiler());
+        stringCompiler.add(
+            new ParenthesisSqlCompiler(Category.String, stringCompiler));
+
         booleanCompiler.add(
             new InfixOpSqlCompiler(
                 Category.Logical, "<", "<", numericCompiler));
@@ -677,6 +821,23 @@ public class RolapNativeSql {
         booleanCompiler.add(
             new InfixOpSqlCompiler(
                 Category.Logical, "<>", "<>", numericCompiler));
+
+        // Add string comparison operators
+        booleanCompiler.add(
+            new InfixOpSqlCompiler(
+                Category.Logical, "=", "=", stringCompiler));
+        booleanCompiler.add(
+            new InfixOpSqlCompiler(
+                Category.Logical, "<>", "<>", stringCompiler));
+
+        // Add logical/boolean comparison operators
+        booleanCompiler.add(
+            new InfixOpSqlCompiler(
+                Category.Logical, "=", "=", booleanCompiler));
+        booleanCompiler.add(
+            new InfixOpSqlCompiler(
+                Category.Logical, "<>", "<>", booleanCompiler));
+
         booleanCompiler.add(
             new IsEmptySqlCompiler(
                 Category.Logical, "IsEmpty", numericCompiler));

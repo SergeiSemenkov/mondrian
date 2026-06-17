@@ -74,7 +74,10 @@ public class CrossJoinArgFactory {
                 continue;
             }
             Hierarchy level =  arg.getLevel().getHierarchy();
-            if (encountered.contains(level) && arg.getMembers() != null) {
+            if (encountered.contains(level)
+                && arg.getMembers() != null
+                && !isSingleTableHierarchy(level))
+            {
                 skip.add(level);
             }
             encountered.add(level);
@@ -87,6 +90,23 @@ public class CrossJoinArgFactory {
             }
         }
         return result;
+    }
+
+    /**
+     * Returns whether the hierarchy is backed by a single table relation.
+     *
+     * <p>Repeated constraints on a single-table hierarchy are not inherently
+     * conflicting, because the same base table can satisfy multiple level
+     * restrictions. We only suppress repeated constraints for join-based
+     * hierarchies, where the SQL shape is ambiguous.</p>
+     */
+    private boolean isSingleTableHierarchy(Hierarchy hierarchy) {
+        if (!(hierarchy instanceof RolapHierarchy)) {
+            return false;
+        }
+        MondrianDef.RelationOrJoin relation =
+            ((RolapHierarchy) hierarchy).getRelation();
+        return relation instanceof MondrianDef.Relation;
     }
 
     /**
@@ -105,7 +125,7 @@ public class CrossJoinArgFactory {
      * <p/>
      * <ul>
      * <li>member.Children
-     * <li>level.members
+     * <li>level.members / level.allMembers
      * <li>descendents of a member
      * <li>member list
      * <li>filter on a dimension
@@ -532,17 +552,21 @@ public class CrossJoinArgFactory {
     }
 
     /**
-     * Checks for <code>&lt;Level&gt;.Members</code>.
+     * Checks for <code>&lt;Level&gt;.Members</code> and
+     * <code>&lt;Level&gt;.AllMembers</code>.
      *
-     * @return an {@link mondrian.rolap.sql.CrossJoinArg} instance describing the Level.members
-     *         function, or null if <code>fun</code> represents something else.
+     * @return an {@link mondrian.rolap.sql.CrossJoinArg} instance describing
+     *         the level-member function, or null if <code>fun</code>
+     *         represents something else.
      */
     private CrossJoinArg[] checkLevelMembers(
         Role role,
         FunDef fun,
         Exp[] args)
     {
-        if (!"Members".equalsIgnoreCase(fun.getName())) {
+        if (!"Members".equalsIgnoreCase(fun.getName())
+            && !"AllMembers".equalsIgnoreCase(fun.getName()))
+        {
             return null;
         }
         if (args.length != 1) {
@@ -555,10 +579,10 @@ public class CrossJoinArgFactory {
         if (!level.isSimple()) {
             return null;
         }
-        // Members of a level in an access-controlled hierarchy cannot be
-        // converted to SQL when RollupPolicy=FULL. (We could be smarter; we
-        // don't currently notice when we don't look below the rolled up level
-        // therefore no access-control is needed.
+        // Members/AllMembers of a level in an access-controlled hierarchy
+        // cannot be converted to SQL when RollupPolicy=FULL. (We could be
+        // smarter; we don't currently notice when we don't look below the
+        // rolled up level therefore no access-control is needed.)
         final Access access = role.getAccess(level.getHierarchy());
         switch (access) {
         case ALL:

@@ -384,16 +384,20 @@ public class RolapLevel extends LevelBase {
             column.name = sourceAttr.keyColumn.columnName;
             keyExp = column;
 
+            nameExp = null;
+
             if (sourceAttr.nameColumn != null) {
                 column = new MondrianDef.Column();
                 column.table = dimensionTable;
                 column.name = sourceAttr.nameColumn.columnName;
-                nameExp = column;
+                captionExp = column;
+            }
+            else {
+                captionExp = null;
             }
 
             name = sourceAttr.name;
             description = sourceAttr.description;
-            captionExp = null;
             if (sourceAttr.orderByColumn != null) {
                 column = new MondrianDef.Column();
                 column.table = dimensionTable;
