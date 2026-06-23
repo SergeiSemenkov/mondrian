@@ -374,10 +374,7 @@ public class RolapLevel extends LevelBase {
 
         if (sourceAttr != null) {
             // Get the table name from the cube dimension's table property
-            String dimensionTable = null;
-            if (xmlCubeDimension != null && xmlCubeDimension.table != null) {
-                dimensionTable = xmlCubeDimension.table;
-            }
+            String dimensionTable = ((MondrianDef.Relation)hierarchy.relation).getAlias();
 
             MondrianDef.Column column = new MondrianDef.Column();
             column.table = dimensionTable;

@@ -244,39 +244,38 @@ public class RolapHierarchy extends HierarchyBase {
 
         if (xmlCubeDimension != null
                 && xmlCubeDimension.table != null
-                && !xmlCubeDimension.table.isEmpty())
-        {
-            String tableId = xmlCubeDimension.table;
+                && !xmlCubeDimension.table.isEmpty()) {
             MondrianDef.Relation relation = null;
 
-            MondrianDef.Relation cubeRelation = (MondrianDef.Relation)cube.getFact();
-            if (cubeRelation != null && tableId.equals(cubeRelation.getAlias())
-                    || (cubeRelation instanceof MondrianDef.Table
-                    && tableId.equals(((MondrianDef.Table) cubeRelation).name)))
-            {
-                relation = cubeRelation;
-            }
+            String tableId = xmlCubeDimension.table;
+            String tableAlias = tableId + "_" + xmlCubeDimension.name;
 
-            if(relation == null) {
-                MondrianDef.Schema xmlSchema = getRolapSchema().getXMLSchema();
-                // Search only in Schema.views collection
-                if (xmlSchema.views != null) {
-                    for (MondrianDef.View view : xmlSchema.views) {
-                        if (tableId.equals(view.alias)) {
-                            relation = view;
-                            break;
-                        }
+            MondrianDef.Schema xmlSchema = getRolapSchema().getXMLSchema();
+            // Search only in Schema.views collection
+            if (xmlSchema.views != null) {
+                for (MondrianDef.View view : xmlSchema.views) {
+                    if (tableId.equals(view.alias)) {
+                        MondrianDef.View viewCopy = new MondrianDef.View();
+                        viewCopy.alias = tableAlias;
+                        viewCopy.selects = view.selects;
+                        relation = viewCopy;
+                        break;
                     }
                 }
             }
-
-            if (relation != null) {
-                this.relation = relation;
-            } else {
+            if (relation == null) {
                 MondrianDef.Table table = new MondrianDef.Table();
+                table.alias = tableAlias;
                 table.name = tableId;
-                this.relation = table;
+                relation = table;
             }
+
+            this.relation = relation;
+        }
+
+        if (this.relation == null)
+        {
+            this.relation = (MondrianDef.Relation)cube.getFact();
         }
 
         // Create an 'all' level even if the hierarchy does not officially

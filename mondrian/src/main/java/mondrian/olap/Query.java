@@ -22,6 +22,7 @@ import mondrian.rolap.agg.MemberColumnPredicate;
 import mondrian.rolap.agg.NotPredicate;
 import mondrian.rolap.agg.OrPredicate;
 import mondrian.rolap.agg.LiteralStarPredicate;
+import mondrian.rolap.agg.ValueColumnPredicate;
 import mondrian.server.*;
 import mondrian.spi.ProfileHandler;
 import mondrian.util.ArrayStack;
@@ -2456,6 +2457,11 @@ public class Query extends QueryPart {
 
             for (QueryAxis axis : axes) {
                 Exp axisExp = axis.getSet();
+                // Resolve the expression tree before processing to ensure all function calls
+                // are properly resolved (e.g., UnresolvedFunCall becomes ResolvedFunCall)
+                // This is important for proper validation in isSupportedNonEmptyFilterCondition
+                final Validator validator = createValidator();
+                axisExp = axisExp.accept(validator);
                 addSetExpressionToSubcubePredicates(
                     baseCube, listOfSubcubeSets, axisExp, false);
             }
@@ -2540,6 +2546,38 @@ public class Query extends QueryPart {
                 baseCube, listOfSubcubeSets, funCall.getArg(0), negated);
             addSetExpressionToSubcubePredicates(
                 baseCube, listOfSubcubeSets, funCall.getArg(1), negated);
+        } else if (funName.equalsIgnoreCase("Union")) {
+            if (funCall.getArgCount() != 2 && funCall.getArgCount() != 3) {
+                throw new UnsupportedOperationException(
+                    "Union in subcube must have 2 or 3 args: " + funCall);
+            }
+
+            List<StarPredicate> leftPredicates = new ArrayList<StarPredicate>();
+            List<StarPredicate> rightPredicates = new ArrayList<StarPredicate>();
+
+            addSetExpressionToSubcubePredicates(
+                baseCube, leftPredicates, funCall.getArg(0), negated);
+            addSetExpressionToSubcubePredicates(
+                baseCube, rightPredicates, funCall.getArg(1), negated);
+
+            if (!leftPredicates.isEmpty() && !rightPredicates.isEmpty()) {
+                StarPredicate leftPredicate =
+                    leftPredicates.size() == 1
+                        ? leftPredicates.get(0)
+                        : new AndPredicate(leftPredicates);
+                StarPredicate rightPredicate =
+                    rightPredicates.size() == 1
+                        ? rightPredicates.get(0)
+                        : new AndPredicate(rightPredicates);
+
+                if (negated) {
+                    listOfSubcubeSets.add(leftPredicate);
+                    listOfSubcubeSets.add(rightPredicate);
+                } else {
+                    listOfSubcubeSets.add(
+                        new OrPredicate(Arrays.asList(leftPredicate, rightPredicate)));
+                }
+            }
         } else if (funName.equalsIgnoreCase("Filter")) {
             addFilterToSubcubePredicates(
                 baseCube, listOfSubcubeSets, funCall, negated);
@@ -2599,28 +2637,38 @@ public class Query extends QueryPart {
 
         // Keep supported conditions explicit to avoid silently accepting
         // non-pushdownable filter semantics.
-        if (!isSupportedNonEmptyFilterCondition(conditionExp)) {
+        if (!isSupportedNonEmptyFilterCondition(baseCube, conditionExp)) {
             throw new UnsupportedOperationException(
                 "Unsupported Filter condition in subcube axis: " + conditionExp);
         }
 
         addSetExpressionToSubcubePredicates(
             baseCube, listOfSubcubeSets, setExp, negated);
+
+        StarPredicate conditionPredicate =
+            createConditionSubcubePredicate(baseCube, conditionExp);
+        if (conditionPredicate != null) {
+            listOfSubcubeSets.add(
+                negated
+                    ? new NotPredicate(conditionPredicate)
+                    : conditionPredicate);
+        }
     }
 
     /**
-     * Recursively validates that a Filter condition is composed only of
-     * IsEmpty checks combined with NOT/OR/AND/parentheses.
-     * Such conditions cannot be pushed down to SQL StarPredicate, but are
-     * safe to accept — the set-side predicate is extracted from the first
-     * Filter argument, and this condition is evaluated at MDX runtime.
-     *
-     * Examples accepted:
-     *   NOT IsEmpty([Measures].[X])
-     *   (NOT IsEmpty([Measures].[X])) OR (NOT IsEmpty([Measures].[Y]))
-     *   ((NOT IsEmpty([A])) OR (NOT IsEmpty([B]))) OR (NOT IsEmpty([C]))
+     * Recursively validates whether a Filter condition can be converted into
+     * a subcube {@link StarPredicate}.
      */
-    private boolean isSupportedNonEmptyFilterCondition(Exp conditionExp) {
+    private boolean isSupportedNonEmptyFilterCondition(
+        RolapCube baseCube,
+        Exp conditionExp)
+    {
+        if (createConditionSubcubePredicate(baseCube, conditionExp) != null) {
+            return true;
+        }
+        if (conditionExp instanceof Literal) {
+            return ((Literal) conditionExp).getCategory() == Category.Logical;
+        }
         if (!(conditionExp instanceof FunCall)) {
             return false;
         }
@@ -2631,19 +2679,372 @@ public class Query extends QueryPart {
             return fc.getArgCount() == 1;
         }
         if (name.equalsIgnoreCase("NOT") && fc.getArgCount() == 1) {
-            return isSupportedNonEmptyFilterCondition(fc.getArg(0));
+            return isSupportedNonEmptyFilterCondition(baseCube, fc.getArg(0));
         }
         if ((name.equalsIgnoreCase("OR") || name.equalsIgnoreCase("AND"))
             && fc.getArgCount() == 2)
         {
-            return isSupportedNonEmptyFilterCondition(fc.getArg(0))
-                && isSupportedNonEmptyFilterCondition(fc.getArg(1));
+            return isSupportedNonEmptyFilterCondition(baseCube, fc.getArg(0))
+                && isSupportedNonEmptyFilterCondition(baseCube, fc.getArg(1));
+        }
+        if ((name.equals("=") || name.equals("<>"))
+            && fc.getArgCount() == 2)
+        {
+            return isSupportedFilterConditionOperand(baseCube, fc.getArg(0))
+                && isSupportedFilterConditionOperand(baseCube, fc.getArg(1));
         }
         // parenthesized expression — single-arg tuple wrapper "(expr)"
         if (name.equals("()") && fc.getArgCount() == 1) {
-            return isSupportedNonEmptyFilterCondition(fc.getArg(0));
+            return isSupportedNonEmptyFilterCondition(baseCube, fc.getArg(0));
         }
         return false;
+    }
+
+    private boolean isSupportedFilterConditionOperand(
+        RolapCube baseCube,
+        Exp exp)
+    {
+        if (createCurrentMemberPropertyValuePredicate(baseCube, exp, "") != null) {
+            return true;
+        }
+        if (exp instanceof Literal) {
+            Literal literal = (Literal) exp;
+            return literal.getCategory() == Category.String
+                || literal.getCategory() == Category.Logical
+                || literal.getCategory() == Category.Numeric;
+        }
+
+        if (isCurrentMemberStringPropertyExpression(exp)) {
+            return true;
+        }
+
+        if (exp instanceof FunCall) {
+            return isSupportedNonEmptyFilterCondition(baseCube, exp);
+        }
+
+        return false;
+    }
+
+    private StarPredicate createConditionSubcubePredicate(
+        RolapCube baseCube,
+        Exp conditionExp)
+    {
+        if (conditionExp instanceof Literal) {
+            Literal literal = (Literal) conditionExp;
+            if (literal.getCategory() == Category.Logical) {
+                return Boolean.TRUE.equals(literal.getValue())
+                    ? LiteralStarPredicate.TRUE
+                    : LiteralStarPredicate.FALSE;
+            }
+            return null;
+        }
+
+        if (!(conditionExp instanceof FunCall)) {
+            return null;
+        }
+
+        FunCall fc = (FunCall) conditionExp;
+        String name = fc.getFunName();
+
+        if (name.equals("()") && fc.getArgCount() == 1) {
+            return createConditionSubcubePredicate(baseCube, fc.getArg(0));
+        }
+
+        if (name.equalsIgnoreCase("NOT") && fc.getArgCount() == 1) {
+            StarPredicate innerPredicate =
+                createConditionSubcubePredicate(baseCube, fc.getArg(0));
+            return innerPredicate == null
+                ? null
+                : new NotPredicate(innerPredicate);
+        }
+
+        if ((name.equalsIgnoreCase("AND") || name.equalsIgnoreCase("OR"))
+            && fc.getArgCount() == 2)
+        {
+            StarPredicate leftPredicate =
+                createConditionSubcubePredicate(baseCube, fc.getArg(0));
+            StarPredicate rightPredicate =
+                createConditionSubcubePredicate(baseCube, fc.getArg(1));
+            if (leftPredicate == null || rightPredicate == null) {
+                return null;
+            }
+            return name.equalsIgnoreCase("AND")
+                ? new AndPredicate(Arrays.asList(leftPredicate, rightPredicate))
+                : new OrPredicate(Arrays.asList(leftPredicate, rightPredicate));
+        }
+
+        if (name.equalsIgnoreCase("IsEmpty") && fc.getArgCount() == 1) {
+            return createCurrentMemberPropertyValuePredicate(
+                baseCube,
+                fc.getArg(0),
+                RolapUtil.sqlNullValue);
+        }
+
+        if ((name.equals("=") || name.equals("<>")) && fc.getArgCount() == 2) {
+            StarPredicate predicate =
+                createComparisonSubcubePredicate(
+                    baseCube,
+                    fc.getArg(0),
+                    fc.getArg(1));
+
+            if (predicate == null) {
+                predicate = createBooleanComparisonSubcubePredicate(
+                    baseCube,
+                    fc.getArg(0),
+                    fc.getArg(1),
+                    name.equals("<>"));
+            } else if (name.equals("<>")) {
+                predicate = new NotPredicate(predicate);
+            }
+
+            return predicate;
+        }
+
+        return null;
+    }
+
+    private StarPredicate createComparisonSubcubePredicate(
+        RolapCube baseCube,
+        Exp leftExp,
+        Exp rightExp)
+    {
+        String literalValue = getStringLiteralValue(rightExp);
+        if (literalValue != null) {
+            StarPredicate predicate = createCurrentMemberPropertyValuePredicate(
+                baseCube,
+                leftExp,
+                literalValue);
+            if (predicate != null) {
+                return predicate;
+            }
+        }
+
+        literalValue = getStringLiteralValue(leftExp);
+        if (literalValue != null) {
+            return createCurrentMemberPropertyValuePredicate(
+                baseCube,
+                rightExp,
+                literalValue);
+        }
+
+        return null;
+    }
+
+    private StarPredicate createBooleanComparisonSubcubePredicate(
+        RolapCube baseCube,
+        Exp leftExp,
+        Exp rightExp,
+        boolean notEquals)
+    {
+        Boolean leftBoolean = evalConstantBoolean(leftExp);
+        Boolean rightBoolean = evalConstantBoolean(rightExp);
+
+        if (leftBoolean != null && rightBoolean != null) {
+            boolean result = leftBoolean.equals(rightBoolean);
+            if (notEquals) {
+                result = !result;
+            }
+            return result
+                ? LiteralStarPredicate.TRUE
+                : LiteralStarPredicate.FALSE;
+        }
+
+        StarPredicate leftPredicate =
+            createConditionSubcubePredicate(baseCube, leftExp);
+        if (leftPredicate != null && rightBoolean != null) {
+            boolean negatePredicate = rightBoolean ^ notEquals;
+            return negatePredicate
+                ? leftPredicate
+                : new NotPredicate(leftPredicate);
+        }
+
+        StarPredicate rightPredicate =
+            createConditionSubcubePredicate(baseCube, rightExp);
+        if (rightPredicate != null && leftBoolean != null) {
+            boolean negatePredicate = leftBoolean ^ notEquals;
+            return negatePredicate
+                ? rightPredicate
+                : new NotPredicate(rightPredicate);
+        }
+
+        return null;
+    }
+
+    private Boolean evalConstantBoolean(Exp exp) {
+        if (exp instanceof Literal) {
+            Literal literal = (Literal) exp;
+            if (literal.getCategory() == Category.Logical) {
+                return Boolean.TRUE.equals(literal.getValue());
+            }
+            if (literal.getCategory() == Category.Numeric
+                && literal.getValue() instanceof Number)
+            {
+                return ((Number) literal.getValue()).doubleValue() != 0D;
+            }
+            return null;
+        }
+
+        if (!(exp instanceof FunCall)) {
+            return null;
+        }
+
+        FunCall funCall = (FunCall) exp;
+        if (funCall.getFunName().equals("()") && funCall.getArgCount() == 1) {
+            return evalConstantBoolean(funCall.getArg(0));
+        }
+        if (funCall.getFunName().equals("=") && funCall.getArgCount() == 2) {
+            Object leftValue = getLiteralValue(funCall.getArg(0));
+            Object rightValue = getLiteralValue(funCall.getArg(1));
+            if (leftValue != null && rightValue != null) {
+                return leftValue.equals(rightValue);
+            }
+        }
+        if (funCall.getFunName().equals("<>") && funCall.getArgCount() == 2) {
+            Object leftValue = getLiteralValue(funCall.getArg(0));
+            Object rightValue = getLiteralValue(funCall.getArg(1));
+            if (leftValue != null && rightValue != null) {
+                return !leftValue.equals(rightValue);
+            }
+        }
+        return null;
+    }
+
+    private Object getLiteralValue(Exp exp) {
+        return exp instanceof Literal
+            ? ((Literal) exp).getValue()
+            : null;
+    }
+
+    private String getStringLiteralValue(Exp exp) {
+        if (!(exp instanceof Literal)) {
+            return null;
+        }
+        Literal literal = (Literal) exp;
+        if (literal.getCategory() != Category.String
+            && literal.getCategory() != Category.Numeric)
+        {
+            return null;
+        }
+        Object value = literal.getValue();
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private boolean isCurrentMemberStringPropertyExpression(Exp exp) {
+        if (!(exp instanceof FunCall)) {
+            return false;
+        }
+        FunCall propertyFunCall = (FunCall) exp;
+        if ((!propertyFunCall.getFunName().equalsIgnoreCase("Name")
+            && !propertyFunCall.getFunName().equalsIgnoreCase("Caption"))
+            || propertyFunCall.getArgCount() != 1)
+        {
+            return false;
+        }
+        return getCurrentMemberComparisonLevel(propertyFunCall.getArg(0)) != null;
+    }
+
+    private StarPredicate createCurrentMemberPropertyValuePredicate(
+        RolapCube baseCube,
+        Exp exp,
+        Object value)
+    {
+        RolapStar.Column column = getCurrentMemberPropertyColumn(baseCube, exp);
+        return column == null ? null : new ValueColumnPredicate(column, value);
+    }
+
+    private RolapStar.Column getCurrentMemberPropertyColumn(
+        RolapCube baseCube,
+        Exp exp)
+    {
+        if (!(exp instanceof FunCall)) {
+            return null;
+        }
+
+        FunCall propertyFunCall = (FunCall) exp;
+        String propertyName = propertyFunCall.getFunName();
+        if (!propertyName.equalsIgnoreCase("Name")
+            && !propertyName.equalsIgnoreCase("Caption"))
+        {
+            return null;
+        }
+        if (propertyFunCall.getArgCount() != 1) {
+            return null;
+        }
+
+        RolapCubeLevel level =
+            getCurrentMemberComparisonLevel(propertyFunCall.getArg(0));
+        if (level == null) {
+            return null;
+        }
+
+        if (baseCube == null) {
+            return level.getStarKeyColumn();
+        }
+
+        RolapStar.Column keyColumn = level.getBaseStarKeyColumn(baseCube);
+        if (keyColumn == null) {
+            return null;
+        }
+
+        MondrianDef.Expression expression =
+            propertyName.equalsIgnoreCase("Caption")
+                ? (level.getCaptionExp() != null
+                    ? level.getCaptionExp()
+                    : (level.getNameExp() != null
+                        ? level.getNameExp()
+                        : level.getKeyExp()))
+                : (level.getNameExp() != null
+                    ? level.getNameExp()
+                    : level.getKeyExp());
+
+        if (expression == null || expression.equals(level.getKeyExp())) {
+            return keyColumn;
+        }
+
+        RolapStar.Column propertyColumn =
+            keyColumn.getTable().lookupColumnByExpression(expression);
+        return propertyColumn == null ? keyColumn : propertyColumn;
+    }
+
+    private RolapCubeLevel getCurrentMemberComparisonLevel(Exp exp) {
+        if (!(exp instanceof FunCall)) {
+            return null;
+        }
+
+        FunCall currentMemberFunCall = (FunCall) exp;
+        if (!currentMemberFunCall.getFunName().equalsIgnoreCase("CurrentMember")
+            || currentMemberFunCall.getArgCount() != 1)
+        {
+            return null;
+        }
+
+        Exp levelExp = currentMemberFunCall.getArg(0);
+        if (levelExp instanceof LevelExpr) {
+            Level level = ((LevelExpr) levelExp).getLevel();
+            return level instanceof RolapCubeLevel
+                ? (RolapCubeLevel) level
+                : null;
+        }
+
+        Hierarchy hierarchy = null;
+        if (levelExp instanceof HierarchyExpr) {
+            hierarchy = ((HierarchyExpr) levelExp).getHierarchy();
+        } else if (levelExp instanceof DimensionExpr) {
+            hierarchy = ((DimensionExpr) levelExp).getDimension().getHierarchy();
+        }
+
+        if (!(hierarchy instanceof RolapCubeHierarchy)) {
+            return null;
+        }
+
+        Level[] levels = hierarchy.getLevels();
+        for (int i = levels.length - 1; i >= 0; i--) {
+            if (!levels[i].isAll() && levels[i] instanceof RolapCubeLevel) {
+                return (RolapCubeLevel) levels[i];
+            }
+        }
+
+        return null;
     }
 
 
@@ -2656,14 +3057,29 @@ public class Query extends QueryPart {
         List<StarPredicate> listOfSubcubeMembers = new ArrayList<StarPredicate>();
 
         for (Exp setArgExp : setFunCall.getArgs()) {
-            if (setArgExp instanceof Id) {
+            Member memberFromSubcube = null;
+
+            // Handle MemberExpr directly
+            if (setArgExp instanceof MemberExpr) {
+                MemberExpr memberExpr = (MemberExpr) setArgExp;
+                memberFromSubcube = memberExpr.getMember();
+            }
+            // Handle Id expressions (resolve to Member)
+            else if (setArgExp instanceof Id) {
                 Id id = (Id) setArgExp;
-                Member memberFromSubcube = getSchemaReader(false)
+                memberFromSubcube = getSchemaReader(false)
                     .withLocus().getMemberByUniqueName(
                         Util.parseIdentifier(id.toString()),
                         true,
                         mondrian.olap.MatchType.EXACT);
+            }
+            else {
+                throw new UnsupportedOperationException(
+                    "Unsupported expression type in subcube set: "
+                    + setArgExp.getClass().getName() + " -> " + setArgExp);
+            }
 
+            if (memberFromSubcube != null) {
                 List<StarPredicate> memberAndList = new ArrayList<StarPredicate>();
 
                 Member memberWalk = memberFromSubcube;
@@ -2682,10 +3098,6 @@ public class Query extends QueryPart {
                 if (memberAndList.size() > 0) {
                     listOfSubcubeMembers.add(new AndPredicate(memberAndList));
                 }
-            } else {
-                throw new UnsupportedOperationException(
-                    "Unsupported expression type in subcube set: "
-                    + setArgExp.getClass().getName() + " -> " + setArgExp);
             }
         }
 

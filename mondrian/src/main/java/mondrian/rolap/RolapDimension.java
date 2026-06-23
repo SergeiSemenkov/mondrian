@@ -300,7 +300,7 @@ class RolapDimension extends DimensionBase {
         levelDef.approxRowCount = "1";
 
         if (xmlDimensionAttribute.nameColumn != null) {
-            levelDef.nameColumn = xmlDimensionAttribute.nameColumn.columnName;
+            levelDef.captionColumn = xmlDimensionAttribute.nameColumn.columnName;
         }
 
         if (xmlDimensionAttribute.orderByColumn != null) {
