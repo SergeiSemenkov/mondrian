@@ -15,6 +15,9 @@ import mondrian.calc.*;
 import mondrian.calc.impl.GenericCalc;
 import mondrian.mdx.ResolvedFunCall;
 import mondrian.olap.*;
+import mondrian.olap.type.MemberType;
+import mondrian.rolap.RolapLevel;
+import mondrian.spi.Dialect;
 
 import java.util.List;
 
@@ -145,6 +148,15 @@ class PropertiesFunDef extends FunDefBase {
                 // we'll likely get a runtime error
                 return Category.Value;
             } else {
+                // For the built-in KEY property, its type is hardcoded as
+                // TYPE_STRING, but the actual type depends on the level's key
+                // column datatype. Resolve from RolapLevel when possible.
+                if (property == Property.KEY || property == Property.MEMBER_KEY) {
+                    int keyCategory = deduceKeyCategory(memberExp, levels);
+                    if (keyCategory != Category.Value) {
+                        return keyCategory;
+                    }
+                }
                 switch (property.getType()) {
                 case TYPE_BOOLEAN:
                     return Category.Logical;
@@ -166,6 +178,48 @@ class PropertiesFunDef extends FunDefBase {
 
         public boolean requiresExpression(int k) {
             return true;
+        }
+
+        /**
+         * Determines the MDX category for the KEY / MEMBER_KEY property by
+         * inspecting the actual key-column datatype of the member's level.
+         * Returns {@link Category#Value} when the level cannot be determined
+         * or is not a {@link RolapLevel}.
+         */
+        private int deduceKeyCategory(Exp memberExp, Level[] fallbackLevels) {
+            // Prefer the specific level carried by the member type expression.
+            Level level = null;
+            if (memberExp.getType() instanceof MemberType) {
+                level = ((MemberType) memberExp.getType()).getLevel();
+            }
+            // Fall back to the leaf level of the hierarchy (same heuristic
+            // used by the caller for the general property lookup).
+            if (level == null && fallbackLevels != null
+                && fallbackLevels.length > 0)
+            {
+                level = fallbackLevels[fallbackLevels.length - 1];
+            }
+            if (!(level instanceof RolapLevel)) {
+                return Category.Value;
+            }
+            Dialect.Datatype datatype = ((RolapLevel) level).getDatatype();
+            if (datatype == null) {
+                return Category.Value;
+            }
+            switch (datatype) {
+            case Integer:
+            case Numeric:
+                return Category.Numeric;
+            case Boolean:
+                return Category.Logical;
+            case Date:
+            case Time:
+            case Timestamp:
+                return Category.DateTime;
+            case String:
+            default:
+                return Category.String;
+            }
         }
     }
 }

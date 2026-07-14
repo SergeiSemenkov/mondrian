@@ -23,7 +23,9 @@ import mondrian.rolap.agg.NotPredicate;
 import mondrian.rolap.agg.OrPredicate;
 import mondrian.rolap.agg.LiteralStarPredicate;
 import mondrian.rolap.agg.ValueColumnPredicate;
+import mondrian.rolap.sql.SqlQuery;
 import mondrian.server.*;
+import mondrian.spi.Dialect;
 import mondrian.spi.ProfileHandler;
 import mondrian.util.ArrayStack;
 
@@ -69,6 +71,8 @@ import java.util.*;
  * @author jhyde, 20 January, 1999
  */
 public class Query extends QueryPart {
+
+    private static final Object NO_LITERAL_COMPARISON_VALUE = new Object();
 
     private Formula[] formulas;
 
@@ -2808,8 +2812,8 @@ public class Query extends QueryPart {
         Exp leftExp,
         Exp rightExp)
     {
-        String literalValue = getStringLiteralValue(rightExp);
-        if (literalValue != null) {
+        Object literalValue = getLiteralComparisonValue(rightExp);
+        if (literalValue != NO_LITERAL_COMPARISON_VALUE) {
             StarPredicate predicate = createCurrentMemberPropertyValuePredicate(
                 baseCube,
                 leftExp,
@@ -2819,8 +2823,8 @@ public class Query extends QueryPart {
             }
         }
 
-        literalValue = getStringLiteralValue(leftExp);
-        if (literalValue != null) {
+        literalValue = getLiteralComparisonValue(leftExp);
+        if (literalValue != NO_LITERAL_COMPARISON_VALUE) {
             return createCurrentMemberPropertyValuePredicate(
                 baseCube,
                 rightExp,
@@ -2915,18 +2919,18 @@ public class Query extends QueryPart {
             : null;
     }
 
-    private String getStringLiteralValue(Exp exp) {
+    private Object getLiteralComparisonValue(Exp exp) {
         if (!(exp instanceof Literal)) {
-            return null;
+            return NO_LITERAL_COMPARISON_VALUE;
         }
         Literal literal = (Literal) exp;
         if (literal.getCategory() != Category.String
+            && literal.getCategory() != Category.Logical
             && literal.getCategory() != Category.Numeric)
         {
-            return null;
+            return NO_LITERAL_COMPARISON_VALUE;
         }
-        Object value = literal.getValue();
-        return value == null ? null : String.valueOf(value);
+        return literal.getValue();
     }
 
     private boolean isCurrentMemberStringPropertyExpression(Exp exp) {
@@ -2948,11 +2952,49 @@ public class Query extends QueryPart {
         Exp exp,
         Object value)
     {
-        RolapStar.Column column = getCurrentMemberPropertyColumn(baseCube, exp);
-        return column == null ? null : new ValueColumnPredicate(column, value);
+        CurrentMemberPropertyReference reference =
+            getCurrentMemberPropertyReference(baseCube, exp);
+        if (reference == null) {
+            return null;
+        }
+        if (!reference.forceStringLiteral) {
+            return new ValueColumnPredicate(reference.column, value);
+        }
+        // .Name / .Caption comparisons are always string comparisons, so we
+        // must quote the value as a SQL string literal regardless of the
+        // underlying column's datatype (e.g. the_year is stored as Integer,
+        // and quoteNumericLiteral("") would append nothing).
+        return new ValueColumnPredicate(reference.column, value) {
+            @Override
+            public void toSql(SqlQuery sqlQuery, StringBuilder buf) {
+                String expr = getConstrainedColumn().generateExprString(sqlQuery);
+                buf.append(expr);
+                Object key = getValue();
+                if (key == RolapUtil.sqlNullValue) {
+                    buf.append(" is null");
+                } else {
+                    buf.append(" = ");
+                    Dialect.Datatype.String.quoteValue(
+                        buf, sqlQuery.getDialect(), key.toString());
+                }
+            }
+        };
     }
 
-    private RolapStar.Column getCurrentMemberPropertyColumn(
+    private static class CurrentMemberPropertyReference {
+        final RolapStar.Column column;
+        final boolean forceStringLiteral;
+
+        private CurrentMemberPropertyReference(
+            RolapStar.Column column,
+            boolean forceStringLiteral)
+        {
+            this.column = column;
+            this.forceStringLiteral = forceStringLiteral;
+        }
+    }
+
+    private CurrentMemberPropertyReference getCurrentMemberPropertyReference(
         RolapCube baseCube,
         Exp exp)
     {
@@ -2961,28 +3003,55 @@ public class Query extends QueryPart {
         }
 
         FunCall propertyFunCall = (FunCall) exp;
-        String propertyName = propertyFunCall.getFunName();
-        if (!propertyName.equalsIgnoreCase("Name")
-            && !propertyName.equalsIgnoreCase("Caption"))
-        {
-            return null;
-        }
-        if (propertyFunCall.getArgCount() != 1) {
-            return null;
+        RolapCubeLevel level;
+        String propertyName;
+        if (propertyFunCall.getFunName().equalsIgnoreCase("Properties")) {
+            if (propertyFunCall.getArgCount() != 2
+                || !(propertyFunCall.getArg(1) instanceof Literal))
+            {
+                return null;
+            }
+            Literal propertyNameLiteral = (Literal) propertyFunCall.getArg(1);
+            if (propertyNameLiteral.getCategory() != Category.String
+                || propertyNameLiteral.getValue() == null)
+            {
+                return null;
+            }
+            propertyName = String.valueOf(propertyNameLiteral.getValue());
+            level = getCurrentMemberComparisonLevel(propertyFunCall.getArg(0));
+        } else {
+            if (propertyFunCall.getArgCount() != 1) {
+                return null;
+            }
+            propertyName = propertyFunCall.getFunName();
+            level = getCurrentMemberComparisonLevel(propertyFunCall.getArg(0));
         }
 
-        RolapCubeLevel level =
-            getCurrentMemberComparisonLevel(propertyFunCall.getArg(0));
         if (level == null) {
             return null;
         }
 
         if (baseCube == null) {
-            return level.getStarKeyColumn();
+            RolapStar.Column keyColumn = level.getStarKeyColumn();
+            return keyColumn == null
+                ? null
+                : new CurrentMemberPropertyReference(keyColumn, false);
         }
 
         RolapStar.Column keyColumn = level.getBaseStarKeyColumn(baseCube);
         if (keyColumn == null) {
+            return null;
+        }
+
+        if (propertyName.equalsIgnoreCase(Property.KEY.getName())
+            || propertyName.equalsIgnoreCase(Property.MEMBER_KEY.getName()))
+        {
+            return new CurrentMemberPropertyReference(keyColumn, false);
+        }
+
+        if (!propertyName.equalsIgnoreCase("Name")
+            && !propertyName.equalsIgnoreCase("Caption"))
+        {
             return null;
         }
 
@@ -2998,12 +3067,20 @@ public class Query extends QueryPart {
                     : level.getKeyExp());
 
         if (expression == null || expression.equals(level.getKeyExp())) {
-            return keyColumn;
+            boolean forceStringLiteral = propertyName.equalsIgnoreCase("Name")
+                || propertyName.equalsIgnoreCase("Caption");
+            return new CurrentMemberPropertyReference(
+                keyColumn,
+                forceStringLiteral);
         }
 
         RolapStar.Column propertyColumn =
             keyColumn.getTable().lookupColumnByExpression(expression);
-        return propertyColumn == null ? keyColumn : propertyColumn;
+        boolean forceStringLiteral = propertyName.equalsIgnoreCase("Name")
+            || propertyName.equalsIgnoreCase("Caption");
+        return new CurrentMemberPropertyReference(
+            propertyColumn == null ? keyColumn : propertyColumn,
+            forceStringLiteral);
     }
 
     private RolapCubeLevel getCurrentMemberComparisonLevel(Exp exp) {

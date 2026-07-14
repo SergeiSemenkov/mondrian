@@ -693,10 +693,10 @@ public class XmlaHandler {
             // CellOrdinal should be int
             // There is a conflict
             // This is fix for Power BI - does not support xsd:int
-            // We can try to int32
-//            if(this.valueType == XSD_INT) {
-//                this.valueType = XSD_LONG;
-//            }
+            // We can try to XSD_INTEGER
+            if(this.valueType != null && this.valueType.equals(XSD_INT)) {
+                this.valueType = XSD_INTEGER;
+            }
         }
         private void setValueAndType(long lval) {
             if (! isValidXsdInt(lval)) {
@@ -2080,13 +2080,13 @@ public class XmlaHandler {
         case Types.INTEGER:
         case Types.SMALLINT:
         case Types.TINYINT:
-            return XSD_INT;
+            return XSD_INTEGER;
         case Types.NUMERIC:
         case Types.DECIMAL:
              // Oracle reports all numbers as NUMERIC. We check
              // the scale of the column and pick the right XSD type.
             if (scale == 0) {
-                return XSD_INT;
+                return XSD_INTEGER;
             } else {
                 return XSD_DECIMAL;
             }
