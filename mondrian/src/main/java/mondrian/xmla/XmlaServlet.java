@@ -101,8 +101,6 @@ public abstract class XmlaServlet
         // init: callbacks
         initCallbacks(servletConfig);
 
-        MondrianServerImpl.modulesPath = servletConfig.getServletContext().getRealPath("/modules");
-
         this.connectionFactory = createConnectionFactory(servletConfig);
     }
 

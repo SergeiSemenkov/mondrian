@@ -14,6 +14,7 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import javax.servlet.ServletOutputStream;
+import javax.servlet.WriteListener;
 import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletResponse;
 
@@ -51,6 +52,14 @@ public class MockHttpServletResponse implements HttpServletResponse {
 
         public void write(int value) throws IOException {
             buffer.write(value);
+        }
+
+        public boolean isReady() {
+            return true;
+        }
+
+        public void setWriteListener(WriteListener writeListener) {
+            // no async I/O in mock implementation
         }
 
         public String getContent() throws IOException {
@@ -147,6 +156,10 @@ public class MockHttpServletResponse implements HttpServletResponse {
      */
     public void setContentLength(int len) {
         setIntHeader("Content-Length", len);
+    }
+
+    public void setContentLengthLong(long len) {
+        setHeader("Content-Length", Long.toString(len));
     }
 
     /**
@@ -413,6 +426,17 @@ public class MockHttpServletResponse implements HttpServletResponse {
         return getHeader("Content-Type");
     }
 
+    public Collection<String> getHeaders(String name) {
+        List<String> list = getHeaderList(name);
+        return (list == null)
+            ? Collections.<String>emptyList()
+            : Collections.unmodifiableList(list);
+    }
+
+    public Collection<String> getHeaderNames() {
+        return Collections.unmodifiableSet(headers.keySet());
+    }
+
 
     /////////////////////////////////////////////////////////////////////////
     //
@@ -424,6 +448,10 @@ public class MockHttpServletResponse implements HttpServletResponse {
     }
 
     public int getStatusCode() {
+        return statusCode;
+    }
+
+    public int getStatus() {
         return statusCode;
     }
 

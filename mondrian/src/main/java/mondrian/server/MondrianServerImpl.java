@@ -37,14 +37,8 @@ import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import java.io.File;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.util.Enumeration;
-import java.util.jar.JarEntry;
-import java.util.jar.JarFile;
-
 import javax.management.*;
+
 
 /**
  * Implementation of {@link mondrian.olap.MondrianServer}.
@@ -56,8 +50,6 @@ public class MondrianServerImpl
     extends MondrianServer
     implements CatalogFinder, XmlaHandler.ConnectionFactory
 {
-    public static String modulesPath = null;
-    public static URLClassLoader ModulesLoader = null;
     /**
      * Id of server. Unique within JVM's lifetime. Not the same as the ID of
      * the server within a lockbox.
@@ -202,10 +194,6 @@ public class MondrianServerImpl
         this.repository = repository;
         this.catalogLocator = catalogLocator;
 
-        // All servers in a JVM share the same lockbox. This is a bit more
-        // forgiving to applications which have slightly mismatched
-        // specifications of the servers where they create and retrieve the
-        // entry.
         this.lockBox = registry.lockBox;
 
         this.aggMgr = new AggregationManager(this);
@@ -216,24 +204,6 @@ public class MondrianServerImpl
             LOGGER.debug("new MondrianServer: id=" + id);
         }
         LOGGER.info("New MondrianServer is created. id=" + id);
-
-        File modulesDir = new File(modulesPath);
-
-        if (modulesDir.exists() && modulesDir.isDirectory()) {
-            File[] jarFiles = modulesDir.listFiles((dir, name) -> name.endsWith(".jar"));
-            if (jarFiles == null) return;
-
-            try {
-                URL[] urls = new URL[jarFiles.length];
-                for (int i = 0; i < jarFiles.length; i++) {
-                    urls[i] = jarFiles[i].toURI().toURL();
-                }
-                ModulesLoader = new URLClassLoader(urls, Thread.currentThread().getContextClassLoader());
-            } catch (Exception e) {
-                LOGGER.info("Failed to load modules: " + e.getMessage());
-            }
-
-        }
 
         registerMBean();
     }
@@ -266,6 +236,7 @@ public class MondrianServerImpl
     public List<String> getKeywords() {
         return KEYWORD_LIST;
     }
+
 
     public LockBox getLockBox() {
         return lockBox;
@@ -537,6 +508,7 @@ public class MondrianServerImpl
     public Repository getRepository() {
         return repository;
     }
+
 }
 
 // End MondrianServerImpl.java

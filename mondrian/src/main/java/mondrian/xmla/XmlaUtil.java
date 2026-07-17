@@ -578,7 +578,7 @@ way too noisy
         MondrianServerImpl mondrianServerImpl = (MondrianServerImpl) MondrianServer.forConnection(rolapConnection);
 
         try {
-            Class<?> clazz = Class.forName(className,true, MondrianServerImpl.ModulesLoader);
+            Class<?> clazz = Class.forName(className,true, MondrianModuleServletRegistrar.modulesLoader);
 
             java.lang.reflect.Method method = clazz.getMethod(
                     "getCsdlXmlElement",
@@ -609,7 +609,7 @@ way too noisy
         try {
             String className = "emondrian.dax.DaxParserImpl";
 
-            Class<?> clazz = Class.forName(className,true, mondrian.server.MondrianServerImpl.ModulesLoader);
+            Class<?> clazz = Class.forName(className,true, mondrian.xmla.MondrianModuleServletRegistrar.modulesLoader);
 
             java.lang.reflect.Method method = clazz.getMethod(
                     "parseQuery",
@@ -642,7 +642,7 @@ way too noisy
         try {
             String className = "emondrian.dax.DaxParserImpl";
 
-            Class<?> clazz = Class.forName(className,true, mondrian.server.MondrianServerImpl.ModulesLoader);
+            Class<?> clazz = Class.forName(className,true, mondrian.xmla.MondrianModuleServletRegistrar.modulesLoader);
 
             java.lang.reflect.Method method = clazz.getMethod(
                     "parseExpression",

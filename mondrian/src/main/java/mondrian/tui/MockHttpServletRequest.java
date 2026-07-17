@@ -89,6 +89,18 @@ public class MockHttpServletRequest implements HttpServletRequest {
         public int read() throws IOException {
             return stream.read();
         }
+
+        public boolean isFinished() {
+            return stream.available() <= 0;
+        }
+
+        public boolean isReady() {
+            return true;
+        }
+
+        public void setReadListener(ReadListener readListener) {
+            // no async I/O in mock implementation
+        }
     }
 
 
@@ -204,6 +216,10 @@ public class MockHttpServletRequest implements HttpServletRequest {
      *
      */
     public int getContentLength() {
+        return getIntHeader("Content-Length");
+    }
+
+    public long getContentLengthLong() {
         return getIntHeader("Content-Length");
     }
 
@@ -422,6 +438,38 @@ public class MockHttpServletRequest implements HttpServletRequest {
      */
     public String getLocalAddr() {
         return localAddr;
+    }
+
+    public DispatcherType getDispatcherType() {
+        return DispatcherType.REQUEST;
+    }
+
+    public AsyncContext startAsync() throws IllegalStateException {
+        throw new IllegalStateException("Async processing is not supported by MockHttpServletRequest");
+    }
+
+    public AsyncContext startAsync(
+        ServletRequest servletRequest,
+        ServletResponse servletResponse) throws IllegalStateException
+    {
+        throw new IllegalStateException("Async processing is not supported by MockHttpServletRequest");
+    }
+
+    public boolean isAsyncStarted() {
+        return false;
+    }
+
+    public boolean isAsyncSupported() {
+        return false;
+    }
+
+    public AsyncContext getAsyncContext() {
+        return null;
+    }
+
+    public ServletContext getServletContext() {
+        HttpSession currentSession = getSession(false);
+        return (currentSession == null) ? null : currentSession.getServletContext();
     }
 
     /**
@@ -644,6 +692,11 @@ public class MockHttpServletRequest implements HttpServletRequest {
         return session;
     }
 
+    public String changeSessionId() {
+        HttpSession currentSession = getSession(false);
+        return (currentSession == null) ? null : currentSession.getId();
+    }
+
     /**
      * Checks whether the requested session ID is still valid.
      *
@@ -673,6 +726,35 @@ public class MockHttpServletRequest implements HttpServletRequest {
     public boolean isRequestedSessionIdFromUrl() {
         // deprecated as of version 2.1 of Servlet API.
         return isRequestedSessionIdFromURL();
+    }
+
+    public <T extends HttpUpgradeHandler> T upgrade(Class<T> handlerClass)
+        throws IOException, ServletException
+    {
+        throw new ServletException("HTTP upgrade is not supported by MockHttpServletRequest");
+    }
+
+    public boolean authenticate(HttpServletResponse response)
+        throws IOException, ServletException
+    {
+        return false;
+    }
+
+    public void login(String username, String password) throws ServletException {
+        this.remoteUser = username;
+    }
+
+    public void logout() throws ServletException {
+        this.remoteUser = null;
+        this.principal = null;
+    }
+
+    public Collection<Part> getParts() throws IOException, ServletException {
+        return Collections.emptyList();
+    }
+
+    public Part getPart(String name) throws IOException, ServletException {
+        return null;
     }
 
     /////////////////////////////////////////////////////////////////////////

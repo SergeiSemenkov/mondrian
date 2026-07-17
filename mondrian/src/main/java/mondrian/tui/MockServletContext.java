@@ -14,6 +14,7 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.*;
 import javax.servlet.*;
+import javax.servlet.descriptor.JspConfigDescriptor;
 
 /**
  * Partial implementation of the {@link ServletContext} where just
@@ -35,7 +36,10 @@ public class MockServletContext implements ServletContext {
     private Map<String, Object> attributes;
     private int majorVersion;
     private int minorVersion;
+    private int sessionTimeout;
     private Properties parameters;
+    private String requestCharacterEncoding;
+    private String responseCharacterEncoding;
 
     public MockServletContext() {
         this.majorVersion = 1;
@@ -56,6 +60,10 @@ public class MockServletContext implements ServletContext {
         return null;
     }
 
+    public String getContextPath() {
+        return "";
+    }
+
     /**
      * Returns the major version of the Java Servlet API that this servlet
      * container supports.
@@ -72,6 +80,14 @@ public class MockServletContext implements ServletContext {
      */
     public int getMinorVersion() {
         return this.minorVersion;
+    }
+
+    public int getEffectiveMajorVersion() {
+        return getMajorVersion();
+    }
+
+    public int getEffectiveMinorVersion() {
+        return getMinorVersion();
     }
 
     /**
@@ -204,6 +220,14 @@ public class MockServletContext implements ServletContext {
         return parameters.getProperty(name);
     }
 
+    public boolean setInitParameter(String name, String value) {
+        if (parameters.containsKey(name)) {
+            return false;
+        }
+        parameters.setProperty(name, value);
+        return true;
+    }
+
     /**
      * Returns the names of the context's initialization parameters as an
      * Enumeration of String objects, or an empty Enumeration if the context has
@@ -258,6 +282,169 @@ public class MockServletContext implements ServletContext {
     public String getServletContextName() {
         // TODO
         return null;
+    }
+
+    public ClassLoader getClassLoader() {
+        return Thread.currentThread().getContextClassLoader();
+    }
+
+    public JspConfigDescriptor getJspConfigDescriptor() {
+        return null;
+    }
+
+    public String getRequestCharacterEncoding() {
+        return requestCharacterEncoding;
+    }
+
+    public void setRequestCharacterEncoding(String encoding) {
+        this.requestCharacterEncoding = encoding;
+    }
+
+    public String getResponseCharacterEncoding() {
+        return responseCharacterEncoding;
+    }
+
+    public void setResponseCharacterEncoding(String encoding) {
+        this.responseCharacterEncoding = encoding;
+    }
+
+    public int getSessionTimeout() {
+        return sessionTimeout;
+    }
+
+    public void setSessionTimeout(int sessionTimeout) {
+        this.sessionTimeout = sessionTimeout;
+    }
+
+    public String getVirtualServerName() {
+        return "mock-server";
+    }
+
+    public void declareRoles(String... roleNames) {
+        // no-op in mock context
+    }
+
+    public ServletRegistration.Dynamic addServlet(
+        String servletName,
+        String className)
+    {
+        return null;
+    }
+
+    public ServletRegistration.Dynamic addServlet(
+        String servletName,
+        Servlet servlet)
+    {
+        return null;
+    }
+
+    public ServletRegistration.Dynamic addServlet(
+        String servletName,
+        Class<? extends Servlet> servletClass)
+    {
+        return null;
+    }
+
+    public ServletRegistration.Dynamic addJspFile(
+        String servletName,
+        String jspFile)
+    {
+        return null;
+    }
+
+    public <T extends Servlet> T createServlet(Class<T> clazz)
+        throws ServletException
+    {
+        try {
+            return clazz.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            throw new ServletException(e);
+        }
+    }
+
+    public ServletRegistration getServletRegistration(String servletName) {
+        return null;
+    }
+
+    public Map<String, ? extends ServletRegistration> getServletRegistrations() {
+        return Collections.emptyMap();
+    }
+
+    public FilterRegistration.Dynamic addFilter(
+        String filterName,
+        String className)
+    {
+        return null;
+    }
+
+    public FilterRegistration.Dynamic addFilter(
+        String filterName,
+        Filter filter)
+    {
+        return null;
+    }
+
+    public FilterRegistration.Dynamic addFilter(
+        String filterName,
+        Class<? extends Filter> filterClass)
+    {
+        return null;
+    }
+
+    public <T extends Filter> T createFilter(Class<T> clazz)
+        throws ServletException
+    {
+        try {
+            return clazz.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            throw new ServletException(e);
+        }
+    }
+
+    public FilterRegistration getFilterRegistration(String filterName) {
+        return null;
+    }
+
+    public Map<String, ? extends FilterRegistration> getFilterRegistrations() {
+        return Collections.emptyMap();
+    }
+
+    public SessionCookieConfig getSessionCookieConfig() {
+        return null;
+    }
+
+    public void setSessionTrackingModes(Set<SessionTrackingMode> sessionTrackingModes) {
+        // no-op in mock context
+    }
+
+    public Set<SessionTrackingMode> getDefaultSessionTrackingModes() {
+        return Collections.emptySet();
+    }
+
+    public Set<SessionTrackingMode> getEffectiveSessionTrackingModes() {
+        return Collections.emptySet();
+    }
+
+    public void addListener(String className) {
+        // no-op in mock context
+    }
+
+    public <T extends EventListener> void addListener(T t) {
+        // no-op in mock context
+    }
+
+    public void addListener(Class<? extends EventListener> listenerClass) {
+        // no-op in mock context
+    }
+
+    public <T extends EventListener> T createListener(Class<T> clazz)
+        throws ServletException
+    {
+        try {
+            return clazz.getDeclaredConstructor().newInstance();
+        } catch (Exception e) {
+            throw new ServletException(e);
+        }
     }
 
 
