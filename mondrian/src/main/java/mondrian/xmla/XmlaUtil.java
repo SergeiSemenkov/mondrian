@@ -49,6 +49,9 @@ import static org.olap4j.metadata.XmlaConstants.Method;
  */
 public class XmlaUtil implements XmlaConstants {
 
+    private static final String DAX_LICENSE_NOT_FOUND_SUFFIX =
+        " Or a proper license was not found.";
+
     /**
      * Invalid characters for XML element name.
      *
@@ -243,6 +246,18 @@ way too noisy
             return rootThrowable(rootThrowable);
         }
         return throwable;
+    }
+
+    private static OlapException newDaxModuleException(
+        String message,
+        Exception exception)
+    {
+        final Throwable rootCause = XmlaException.getRootCause(exception);
+        final String detail = rootCause.getMessage();
+        final String fullMessage = detail == null || detail.isEmpty()
+            ? message + DAX_LICENSE_NOT_FOUND_SUFFIX
+            : message + DAX_LICENSE_NOT_FOUND_SUFFIX + " Details: " + detail;
+        return new OlapException(fullMessage);
     }
 
     /**
@@ -592,11 +607,13 @@ way too noisy
 
             return schemaElement;
         } catch (ClassNotFoundException e) {
-            throw new OlapException("The emondrian DAX module was not found.");
+            throw newDaxModuleException("The emondrian DAX module was not found.", e);
         } catch (NoSuchMethodException e) {
-            throw new OlapException("The emondrian DAX CsdlSchemaGenerator.getCsdlXmlElement method was not found.");
+            throw newDaxModuleException(
+                "The emondrian DAX CsdlSchemaGenerator.getCsdlXmlElement method was not found.",
+                e);
         } catch (Exception e) {
-            throw new OlapException("The emondrian DAX module was not found.");
+            throw newDaxModuleException("The emondrian DAX module was not found.", e);
         }
     }
 
@@ -625,11 +642,13 @@ way too noisy
             QueryPart queryPart =  (QueryPart )result;
             return queryPart;
         } catch (ClassNotFoundException e) {
-            throw new OlapException("The emondrian DAX module was not found.");
+            throw newDaxModuleException("The emondrian DAX module was not found.", e);
         } catch (NoSuchMethodException e) {
-            throw new OlapException("The emondrian DAX DaxParser.parseQuery method was not found.");
+            throw newDaxModuleException(
+                "The emondrian DAX DaxParser.parseQuery method was not found.",
+                e);
         } catch (Exception e) {
-            throw new OlapException("The emondrian DAX module was not found.", e);
+            throw newDaxModuleException("The emondrian DAX module was not found.", e);
         }
     }
 
@@ -658,11 +677,13 @@ way too noisy
             Exp exp =  (Exp)result;
             return exp;
         } catch (ClassNotFoundException e) {
-            throw new OlapException("The emondrian DAX module was not found.");
+            throw newDaxModuleException("The emondrian DAX module was not found.", e);
         } catch (NoSuchMethodException e) {
-            throw new OlapException("The emondrian DAX DaxParser.parseExpression method was not found.");
+            throw newDaxModuleException(
+                "The emondrian DAX DaxParser.parseExpression method was not found.",
+                e);
         } catch (Exception e) {
-            throw new OlapException("The emondrian DAX module was not found.");
+            throw newDaxModuleException("The emondrian DAX module was not found.", e);
         }
     }
 
