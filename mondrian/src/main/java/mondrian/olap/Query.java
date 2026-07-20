@@ -2541,10 +2541,12 @@ public class Query extends QueryPart {
             }
             addSetExpressionToSubcubePredicates(
                 baseCube, listOfSubcubeSets, headSetExp, negated);
-        } else if (funName.equalsIgnoreCase("CrossJoin")) {
+        } else if (funName.equalsIgnoreCase("CrossJoin")
+            || funName.equalsIgnoreCase("NonEmptyCrossJoin"))
+        {
             if (funCall.getArgCount() != 2) {
                 throw new UnsupportedOperationException(
-                    "CrossJoin in subcube must have 2 args: " + funCall);
+                    funName + " in subcube must have 2 args: " + funCall);
             }
             addSetExpressionToSubcubePredicates(
                 baseCube, listOfSubcubeSets, funCall.getArg(0), negated);
