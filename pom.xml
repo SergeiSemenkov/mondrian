@@ -29,6 +29,13 @@
   <properties>
     <license.licenseName>epl_only_v1</license.licenseName>
 
+    <source.jdk.version>17</source.jdk.version>
+    <target.jdk.version>17</target.jdk.version>
+    <release.jdk.version>17</release.jdk.version>
+    <maven.compiler.release>17</maven.compiler.release>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
+
     <olap4j.version>1.2.0</olap4j.version>
     <eigenbase-properties.version>1.1.2</eigenbase-properties.version>
     <commons-io.version>1.4</commons-io.version>
@@ -47,6 +54,7 @@
     <olap4j-xmlaserver.version>1.2.0</olap4j-xmlaserver.version>
     <eigenbase-xom.version>1.3.5</eigenbase-xom.version>
     <servlet-api.version>4.0.1</servlet-api.version>
+    <jakarta-servlet-api.version>6.0.0</jakarta-servlet-api.version>
     <commons-lang.version>2.4</commons-lang.version>
     <xmlunit.version>1.1</xmlunit.version>
   </properties>

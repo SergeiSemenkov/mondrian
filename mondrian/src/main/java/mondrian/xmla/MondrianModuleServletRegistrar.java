@@ -13,13 +13,13 @@ package mondrian.xmla;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import javax.servlet.ServletContext;
-import javax.servlet.ServletContextEvent;
-import javax.servlet.ServletContextListener;
-import javax.servlet.ServletRegistration;
-import javax.servlet.annotation.WebListener;
-import javax.servlet.annotation.WebServlet;
-import javax.servlet.http.HttpServlet;
+import jakarta.servlet.ServletContext;
+import jakarta.servlet.ServletContextEvent;
+import jakarta.servlet.ServletContextListener;
+import jakarta.servlet.ServletRegistration;
+import jakarta.servlet.annotation.WebListener;
+import jakarta.servlet.annotation.WebServlet;
+import jakarta.servlet.http.HttpServlet;
 
 import java.io.File;
 import java.net.URL;
@@ -254,7 +254,20 @@ public class MondrianModuleServletRegistrar implements ServletContextListener {
             urlPatterns  = new String[]{"/" + clazz.getSimpleName().toLowerCase()};
         }
 
-        registerServlet(ctx, servletName, servlet, urlPatterns);
+        // @WebServlet(asyncSupported=...) is only honored by the container for
+        // servlets it discovers itself via classpath/web-fragment scanning at
+        // deploy time -- it is silently ignored for servlets registered
+        // programmatically via ServletContext.addServlet() (Servlet 3.x dynamic
+        // registration), which is what this registrar does. Without explicitly
+        // propagating it to the ServletRegistration.Dynamic below, any module
+        // servlet that calls request.startAsync() (e.g. an SSE transport) fails
+        // at request time with "A filter or servlet of the current chain does
+        // not support asynchronous operations", even though its own annotation
+        // says asyncSupported = true.
+        boolean asyncSupported =
+            webServletAnnotation != null && webServletAnnotation.asyncSupported();
+
+        registerServlet(ctx, servletName, servlet, asyncSupported, urlPatterns);
 
         LOGGER.info("Registered HttpServlet from module: "
             + servletName
@@ -279,6 +292,26 @@ public class MondrianModuleServletRegistrar implements ServletContextListener {
             String name,
             HttpServlet servlet,
             String... urlPatterns) {
+        registerServlet(ctx, name, servlet, false, urlPatterns);
+    }
+
+    /**
+     * Adds a servlet to the context using Servlet 3.x dynamic registration.
+     *
+     * @param ctx             the servlet context
+     * @param name            unique registration name
+     * @param servlet         servlet instance
+     * @param asyncSupported  whether to mark this registration as async-capable
+     *                        (must be true for any servlet that calls
+     *                        {@code request.startAsync()}, e.g. an SSE transport)
+     * @param urlPatterns     one or more URL patterns
+     */
+    public static void registerServlet(
+            ServletContext ctx,
+            String name,
+            HttpServlet servlet,
+            boolean asyncSupported,
+            String... urlPatterns) {
 
         if (ctx == null) {
             LOGGER.warn("registerServlet: ServletContext is null — cannot register '"
@@ -301,6 +334,8 @@ public class MondrianModuleServletRegistrar implements ServletContextListener {
             LOGGER.warn("Servlet '" + name + "' already exists — skipping.");
             return;
         }
+
+        reg.setAsyncSupported(asyncSupported);
 
         Set<String> conflicts = reg.addMapping(urlPatterns);
         if (!conflicts.isEmpty()) {

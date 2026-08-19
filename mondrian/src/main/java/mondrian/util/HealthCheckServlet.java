@@ -10,8 +10,8 @@
 
 package mondrian.util;
 
-import javax.servlet.*;
-import javax.servlet.http.*;
+import jakarta.servlet.*;
+import jakarta.servlet.http.*;
 import java.io.IOException;
 
 public class HealthCheckServlet extends HttpServlet {

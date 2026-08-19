@@ -3,7 +3,7 @@ The Mondrian Schema Workbench allows you to visually create and test Mondrian
 OLAP cube schemas.
 ### Building
 #### Requirements
-* JDK 1.8 or higher
+* JDK 17
 * Maven 3.3 or higher
 
 #### Building

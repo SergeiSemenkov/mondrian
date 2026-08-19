@@ -8,7 +8,7 @@
     <version>9.3.0.0-SNAPSHOT</version>
   </parent>
   <artifactId>mondrian</artifactId>
-  <version>9.3.0-emondrian.21</version>
+  <version>9.3.0-emondrian.22</version>
   <name>Pentaho Community Edition Project: ${project.artifactId}</name>
   <description>Mondrian OLAP Engine</description>
   <url>http://mondrian.pentaho.com</url>
@@ -126,6 +126,26 @@
       <artifactId>javax.servlet-api</artifactId>
       <version>${servlet-api.version}</version>
     </dependency>
+    <!-- MondrianModuleServletRegistrar (mondrian.xmla) targets Tomcat 10.1.x
+         (Jakarta EE 10 / Servlet 6.0) for the /modules servlet-discovery
+         mechanism, so it needs jakarta.servlet alongside the javax.servlet-api
+         above, which the rest of this module's servlet classes still use. -->
+    <dependency>
+      <groupId>jakarta.servlet</groupId>
+      <artifactId>jakarta.servlet-api</artifactId>
+      <version>${jakarta-servlet-api.version}</version>
+      <!-- provided: the container (Tomcat 10.1.x) already supplies this on its own
+           classloader. Bundling a second copy into WEB-INF/lib (the default for a
+           compile-scope dependency once a downstream war, e.g. eMondrian, packages
+           this artifact) gives statically-declared servlets a jakarta.servlet.Servlet
+           identity distinct from the one Tomcat's own StandardWrapper casts against,
+           throwing ClassCastException: class ... cannot be cast to class
+           jakarta.servlet.Servlet (... loader ParallelWebappClassLoader ... loader
+           java.net.URLClassLoader ...) for every statically-declared (web.xml)
+           servlet in the app. Confirmed by actually deploying this without
+           `provided` and seeing /xmla, /metrics, /health, /logs all break this way. -->
+      <scope>provided</scope>
+    </dependency>
     <dependency>
       <groupId>javax.servlet</groupId>
       <artifactId>jsp-api</artifactId>
@@ -175,9 +195,16 @@
       <artifactId>simpleclient_hotspot</artifactId>
       <version>0.16.0</version>
     </dependency>
+    <!-- jakarta variant: the plain simpleclient_servlet artifact's
+         io.prometheus.client.exporter.MetricsServlet still extends
+         javax.servlet.http.HttpServlet, which Tomcat 10.1.x's StandardWrapper
+         cannot cast to jakarta.servlet.Servlet. Same class of bug as the
+         mondrian.xmla/util servlets, just in a third-party jar we can't sed.
+         This variant's io.prometheus.client.servlet.jakarta.exporter.MetricsServlet
+         is jakarta-based; web.xml's servlet-class must reference that FQCN. -->
     <dependency>
       <groupId>io.prometheus</groupId>
-      <artifactId>simpleclient_servlet</artifactId>
+      <artifactId>simpleclient_servlet_jakarta</artifactId>
       <version>0.16.0</version>
     </dependency>
     <dependency>

@@ -20,7 +20,7 @@ import mondrian.xmla.XmlaHandler;
 import java.io.File;
 import java.net.MalformedURLException;
 import java.net.URL;
-import javax.servlet.*;
+import jakarta.servlet.*;
 
 /**
  * Extension to {@link mondrian.xmla.XmlaServlet} that instantiates a

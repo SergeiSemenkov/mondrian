@@ -13,15 +13,17 @@ package mondrian.web.servlet;
 
 import mondrian.olap.*;
 import mondrian.spi.CatalogLocator;
-import mondrian.spi.impl.ServletContextCatalogLocator;
 import mondrian.web.taglib.ResultCache;
 
 import org.eigenbase.xom.StringEscaper;
 
 import java.io.IOException;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.util.Enumeration;
 import java.util.List;
 import javax.servlet.ServletConfig;
+import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
 import javax.servlet.http.*;
 
@@ -48,7 +50,46 @@ public class MdxQueryServlet extends HttpServlet {
             String value = config.getInitParameter(name);
             MondrianProperties.instance().setProperty(name, value);
         }
-        locator = new ServletContextCatalogLocator(config.getServletContext());
+        locator = new JavaxServletContextCatalogLocator(config.getServletContext());
+    }
+
+    /**
+     * Local copy of {@link mondrian.spi.impl.ServletContextCatalogLocator}'s
+     * logic against a {@code javax.servlet.ServletContext} instead of
+     * {@code jakarta.servlet.ServletContext} -- this servlet predates the
+     * jakarta.servlet migration and isn't wired into web.xml (nothing in this
+     * deployment uses it), so it stays on javax.servlet to match the also-
+     * unmigrated {@link mondrian.web.taglib.ResultCache} it calls into,
+     * rather than pulling the shared, now-jakarta-typed locator across the
+     * divide.
+     */
+    private static class JavaxServletContextCatalogLocator
+        implements CatalogLocator
+    {
+        private final ServletContext servletContext;
+
+        JavaxServletContextCatalogLocator(ServletContext servletContext) {
+            this.servletContext = servletContext;
+        }
+
+        public String locate(String catalogPath) {
+            if (catalogPath != null && catalogPath.startsWith("/")) {
+                try {
+                    URL url = servletContext.getResource(catalogPath);
+                    if (url == null) {
+                        url = servletContext.getResource("/");
+                        url = new URL(
+                            url.getProtocol(),
+                            url.getHost(),
+                            url.getPort(),
+                            url.getFile() + catalogPath.substring(1));
+                    }
+                    catalogPath = url.toString();
+                } catch (MalformedURLException ignored) {
+                }
+            }
+            return catalogPath;
+        }
     }
 
     /**

@@ -12,7 +12,7 @@
 package mondrian.web.taglib;
 
 import mondrian.olap.*;
-import mondrian.spi.impl.ServletContextCatalogLocator;
+import mondrian.spi.CatalogLocator;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
@@ -22,6 +22,9 @@ import org.w3c.dom.Document;
 import javax.servlet.ServletContext;
 import javax.servlet.http.*;
 import javax.xml.parsers.ParserConfigurationException;
+
+import java.net.MalformedURLException;
+import java.net.URL;
 
 /**
  * Holds a query/result pair in the user's session.
@@ -126,7 +129,7 @@ public class ResultCache implements HttpSessionBindingListener {
         this.connection =
             DriverManager.getConnection(
                 connectString,
-                new ServletContextCatalogLocator(servletContext));
+                new JavaxServletContextCatalogLocator(servletContext));
         if (this.connection == null) {
             throw new RuntimeException(
                 "No ROLAP connection from connectString: "
@@ -143,7 +146,43 @@ public class ResultCache implements HttpSessionBindingListener {
         }
     }
 
+    /**
+     * Local copy of {@link mondrian.spi.impl.ServletContextCatalogLocator}'s
+     * logic against a {@code javax.servlet.ServletContext} instead of
+     * {@code jakarta.servlet.ServletContext} -- this legacy JSP taglib class
+     * predates the jakarta.servlet migration and isn't wired into web.xml
+     * (nothing in this deployment uses it), so it stays on the old javax JSP
+     * tag API (jakarta.servlet.jsp isn't a dependency here) rather than
+     * pulling the shared, now-jakarta-typed locator across the divide.
+     */
+    private static class JavaxServletContextCatalogLocator
+        implements CatalogLocator
+    {
+        private final ServletContext servletContext;
 
+        JavaxServletContextCatalogLocator(ServletContext servletContext) {
+            this.servletContext = servletContext;
+        }
+
+        public String locate(String catalogPath) {
+            if (catalogPath != null && catalogPath.startsWith("/")) {
+                try {
+                    URL url = servletContext.getResource(catalogPath);
+                    if (url == null) {
+                        url = servletContext.getResource("/");
+                        url = new URL(
+                            url.getProtocol(),
+                            url.getHost(),
+                            url.getPort(),
+                            url.getFile() + catalogPath.substring(1));
+                    }
+                    catalogPath = url.toString();
+                } catch (MalformedURLException ignored) {
+                }
+            }
+            return catalogPath;
+        }
+    }
 }
 
 // End ResultCache.java

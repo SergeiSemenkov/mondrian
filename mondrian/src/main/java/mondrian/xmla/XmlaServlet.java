@@ -22,9 +22,9 @@ import org.w3c.dom.Element;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.util.*;
-import javax.servlet.ServletConfig;
-import javax.servlet.ServletException;
-import javax.servlet.http.*;
+import jakarta.servlet.ServletConfig;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.*;
 
 /**
  * Base XML/A servlet.

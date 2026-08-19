@@ -2,7 +2,7 @@
 Mondrian is an Online Analytical Processing (OLAP) server that enables business users to analyze large quantities of data in real-time.  Mondrian implements the Olap4J API.
 ### Building
 #### Requirements
-* JDK 1.8 or higher
+* JDK 17
 * Maven 3.3 or higher
 * Docker (for running integration tests without a dedicated MySQL DB)
 

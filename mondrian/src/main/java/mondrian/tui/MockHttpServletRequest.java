@@ -14,8 +14,8 @@ import java.security.Principal;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.*;
-import javax.servlet.*;
-import javax.servlet.http.*;
+import jakarta.servlet.*;
+import jakarta.servlet.http.*;
 
 /**
  * Partial implementation of the {@link HttpServletRequest} where just
@@ -465,6 +465,18 @@ public class MockHttpServletRequest implements HttpServletRequest {
 
     public AsyncContext getAsyncContext() {
         return null;
+    }
+
+    public ServletConnection getServletConnection() {
+        return null;
+    }
+
+    public String getProtocolRequestId() {
+        return "";
+    }
+
+    public String getRequestId() {
+        return "";
     }
 
     public ServletContext getServletContext() {
