@@ -59,6 +59,19 @@ class RolapDimension extends DimensionBase {
 
     private static final Logger LOGGER = LogManager.getLogger(RolapDimension.class);
 
+    /**
+     * HIERARCHY_ORIGIN bit values (see MDSCHEMA_HIERARCHIES / MDSCHEMA_LEVELS):
+     * MD_ORIGIN_USER_DEFINED 0x1, MD_ORIGIN_ATTRIBUTE 0x2,
+     * MD_ORIGIN_KEY_ATTRIBUTE 0x4, MD_ORIGIN_INTERNAL 0x8.
+     *
+     * <p>A key attribute is reported as ATTRIBUTE|KEY_ATTRIBUTE rather than
+     * KEY_ATTRIBUTE alone: clients apply a default restriction of
+     * USER_DEFINED|ATTRIBUTE to these rowsets, so a bare 0x4 would hide the
+     * dimension's key attribute from them entirely.
+     */
+    private static final String ATTRIBUTE_ORIGIN = "2";
+    private static final String KEY_ATTRIBUTE_ORIGIN = "6";
+
     private final Schema schema;
     private final Map<String, Annotation> annotationMap;
     private MondrianDef.DimensionAttribute[] xmlAttributes; // Add this field
@@ -125,6 +138,18 @@ class RolapDimension extends DimensionBase {
 
         // Store the XML attributes
         this.xmlAttributes = xmlDimension.Attributes;
+
+        // A dimension joins the fact table through the key attribute's column,
+        // so derive primaryKey from it when the dimension doesn't state one
+        // explicitly. RolapHierarchy then propagates it to every hierarchy.
+        MondrianDef.DimensionAttribute keyAttribute =
+            findKeyAttribute(xmlDimension);
+        if (keyAttribute != null
+            && xmlCubeDimension != null
+            && Util.isEmpty(xmlCubeDimension.primaryKey))
+        {
+            xmlCubeDimension.primaryKey = keyAttribute.keyColumn.columnName;
+        }
 
         // Create hierarchies from XML hierarchy definitions
         List<RolapHierarchy> hierarchyList = new ArrayList<>();
@@ -281,10 +306,15 @@ class RolapDimension extends DimensionBase {
     ) {
         MondrianDef.Hierarchy xmlHierarchy = new MondrianDef.Hierarchy();
         xmlHierarchy.name = xmlDimensionAttribute.name;
-        xmlHierarchy.hasAll = true;
+        // SSAS IsAggregatable=false means the attribute hierarchy has no (All) level.
+        xmlHierarchy.hasAll = xmlDimensionAttribute.isAggregatable == null
+                || xmlDimensionAttribute.isAggregatable;
         xmlHierarchy.visible = xmlDimensionAttribute.attributeHierarchyVisible != null ?
                 xmlDimensionAttribute.attributeHierarchyVisible : true;
         xmlHierarchy.description = xmlDimensionAttribute.description;
+        xmlHierarchy.displayFolder =
+                xmlDimensionAttribute.attributeHierarchyDisplayFolder;
+        xmlHierarchy.defaultMember = xmlDimensionAttribute.defaultMember;
 
         // Create single level for the attribute
         MondrianDef.Level levelDef = new MondrianDef.Level();
@@ -296,23 +326,75 @@ class RolapDimension extends DimensionBase {
         levelDef.hideMemberIf = "Never";
         levelDef.properties = new MondrianDef.Property[0];
         levelDef.description = xmlDimensionAttribute.description;
-        levelDef.levelType = "Regular";
-        levelDef.approxRowCount = "1";
+        levelDef.levelType = xmlDimensionAttribute.levelType != null
+                ? xmlDimensionAttribute.levelType
+                : "Regular";
+        // Null (rather than a made-up count) makes RolapLevel.loadApproxRowCount
+        // record "unknown" instead of asserting a cardinality we don't have.
+        levelDef.approxRowCount = xmlDimensionAttribute.estimatedCount != null
+                ? xmlDimensionAttribute.estimatedCount.toString()
+                : null;
 
+        // SSAS NameColumn is a display name only -- member identity stays on the key.
+        // Mondrian's Level.nameColumn would change the member's name and therefore its
+        // unique name (how MDX/DAX addresses it), so captionColumn is the closer match.
         if (xmlDimensionAttribute.nameColumn != null) {
             levelDef.captionColumn = xmlDimensionAttribute.nameColumn.columnName;
         }
 
-        if (xmlDimensionAttribute.orderByColumn != null) {
-            levelDef.ordinalColumn = xmlDimensionAttribute.orderByColumn.columnName;
-        }
+        levelDef.ordinalColumn = resolveOrdinalColumn(xmlDimensionAttribute);
 
         xmlHierarchy.levels = new MondrianDef.Level[] { levelDef };
-        xmlHierarchy.origin = "2";
+        xmlHierarchy.origin = "Key".equals(xmlDimensionAttribute.usage)
+                ? KEY_ATTRIBUTE_ORIGIN
+                : ATTRIBUTE_ORIGIN;
 
         RolapHierarchy hierarchy = new RolapHierarchy(
                 cube, this, xmlHierarchy, xmlCubeDimension);
         return hierarchy;
+    }
+
+    /** Returns the dimension's usage='Key' attribute, or null if it has none. */
+    private static MondrianDef.DimensionAttribute findKeyAttribute(
+        MondrianDef.Dimension xmlDimension)
+    {
+        if (xmlDimension.Attributes == null) {
+            return null;
+        }
+        for (MondrianDef.DimensionAttribute attribute : xmlDimension.Attributes) {
+            if ("Key".equals(attribute.usage) && attribute.keyColumn != null) {
+                return attribute;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Picks the column an attribute's members are ordered by. An explicit
+     * orderByColumn wins; otherwise SSAS's orderBy enum selects one of the
+     * attribute's own columns.
+     */
+    private static String resolveOrdinalColumn(
+            MondrianDef.DimensionAttribute xmlDimensionAttribute)
+    {
+        if (xmlDimensionAttribute.orderByColumn != null) {
+            return xmlDimensionAttribute.orderByColumn.columnName;
+        }
+        if (xmlDimensionAttribute.orderBy == null) {
+            return null;
+        }
+        switch (xmlDimensionAttribute.orderBy) {
+        case "Key":
+            return xmlDimensionAttribute.keyColumn.columnName;
+        case "Name":
+            return xmlDimensionAttribute.nameColumn != null
+                    ? xmlDimensionAttribute.nameColumn.columnName
+                    : xmlDimensionAttribute.keyColumn.columnName;
+        default:
+            // SchemaValidator rejects the other orderBy values at load time, so
+            // this is unreachable for any schema the engine accepted.
+            return null;
+        }
     }
 
     /**

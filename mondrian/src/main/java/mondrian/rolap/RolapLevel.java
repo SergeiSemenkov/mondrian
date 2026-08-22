@@ -401,13 +401,27 @@ public class RolapLevel extends LevelBase {
                 column.name = sourceAttr.orderByColumn.columnName;
                 ordinalExp = column;
             }
-            parentExp = null;
-            nullParentValue = null;
-            closure = null;
-            properties = new RolapProperty[0];
+            // Parent-child, raggedness and level type are properties of the
+            // level's place in its hierarchy, not of the attribute supplying the
+            // column, so they are taken from the level as usual. Only the parent
+            // column needs rebinding: getParentExp() would bind it to
+            // Level.table, which an attribute-based level does not set.
+            if (xmlLevel.parentColumn != null) {
+                MondrianDef.Column parentColumn = new MondrianDef.Column();
+                parentColumn.table = dimensionTable;
+                parentColumn.name = xmlLevel.parentColumn;
+                parentExp = parentColumn;
+            } else {
+                parentExp = xmlLevel.getParentExp();
+            }
+            nullParentValue = xmlLevel.nullParentValue;
+            closure = xmlLevel.closure;
+            properties = createAttributeProperties(
+                xmlLevel, dimensionTable, (RolapDimension) hierarchy.getDimension());
             internalType = null;
-            hideMemberCondition = HideMemberCondition.Never;
-            levelType = LevelType.Regular;
+            hideMemberCondition =
+                HideMemberCondition.valueOf(xmlLevel.hideMemberIf);
+            levelType = toLevelType(xmlLevel.levelType);
             annotationMap = java.util.Collections.emptyMap();
             datatype = Dialect.Datatype.valueOf(sourceAttr.keyColumn.dataType);
         } else {
@@ -421,10 +435,7 @@ public class RolapLevel extends LevelBase {
             properties = createProperties(xmlLevel);
             internalType = toInternalType(xmlLevel.internalType);
             hideMemberCondition = HideMemberCondition.valueOf(xmlLevel.hideMemberIf);
-            levelType = LevelType.valueOf(
-                xmlLevel.levelType.equals("TimeHalfYear")
-                    ? "TimeHalfYears"
-                    : xmlLevel.levelType);
+            levelType = toLevelType(xmlLevel.levelType);
             annotationMap = RolapHierarchy.createAnnotationMap(xmlLevel.annotations);
         }
 
@@ -488,27 +499,104 @@ public class RolapLevel extends LevelBase {
         for (int i = 0; i < xmlLevel.properties.length; i++) {
             MondrianDef.Property xmlProperty = xmlLevel.properties[i];
 
-            FormatterCreateContext formatterContext =
-                    new FormatterCreateContext.Builder(xmlProperty.name)
-                        .formatterDef(xmlProperty.propertyFormatter)
-                        .formatterAttr(xmlProperty.formatter)
-                        .build();
-            PropertyFormatter formatter =
-                FormatterFactory.instance()
-                    .createPropertyFormatter(formatterContext);
-
             list.add(
-                new RolapProperty(
-                    xmlProperty.name,
+                createProperty(
+                    xmlProperty,
                     convertPropertyTypeNameToCode(xmlProperty.type),
-                    xmlLevel.getPropertyExp(i),
-                    formatter,
-                    xmlProperty.caption,
-                    xmlLevel.properties[i].dependsOnLevelValue,
-                    false,
-                    xmlProperty.description));
+                    xmlLevel.getPropertyExp(i)));
         }
         return list.toArray(new RolapProperty[list.size()]);
+    }
+
+    /**
+     * Builds the properties of a level that draws its columns from a
+     * DimensionAttribute.
+     *
+     * <p>Unlike the classic path, the column cannot come from
+     * {@link MondrianDef.Level#getPropertyExp}: that binds to
+     * {@code Level.table}, which such a level does not set. Every column is
+     * bound to {@code dimensionTable} instead, the same table the level's own
+     * key, caption and ordinal columns use.
+     */
+    private static RolapProperty[] createAttributeProperties(
+        MondrianDef.Level xmlLevel,
+        String dimensionTable,
+        RolapDimension dimension)
+    {
+        List<RolapProperty> list = new ArrayList<RolapProperty>();
+        for (MondrianDef.Property xmlProperty : xmlLevel.properties) {
+            final String columnName;
+            final String dataType;
+            if (xmlProperty.sourceAttribute != null) {
+                final MondrianDef.DimensionAttribute attribute =
+                    dimension.findSourceAttribute(xmlProperty.sourceAttribute);
+                if (attribute == null) {
+                    throw Util.newError(
+                        "sourceAttribute '" + xmlProperty.sourceAttribute
+                        + "' not found for property '" + xmlProperty.name
+                        + "' of level '" + xmlLevel.name + "'");
+                }
+                // The attribute owns the column and its type; Property.type is
+                // documented as ignored here rather than silently disagreeing.
+                columnName = attribute.keyColumn.columnName;
+                dataType = attribute.keyColumn.dataType;
+            } else if (xmlProperty.column != null) {
+                columnName = xmlProperty.column;
+                dataType = xmlProperty.type;
+            } else {
+                throw Util.newError(
+                    "Property '" + xmlProperty.name + "' of level '"
+                    + xmlLevel.name + "' must have either sourceAttribute or column");
+            }
+
+            MondrianDef.Column column = new MondrianDef.Column();
+            column.table = dimensionTable;
+            column.name = columnName;
+
+            list.add(
+                createProperty(
+                    xmlProperty, convertPropertyTypeNameToCode(dataType), column));
+        }
+        return list.toArray(new RolapProperty[list.size()]);
+    }
+
+    private static RolapProperty createProperty(
+        MondrianDef.Property xmlProperty,
+        Property.Datatype datatype,
+        MondrianDef.Expression exp)
+    {
+        FormatterCreateContext formatterContext =
+                new FormatterCreateContext.Builder(xmlProperty.name)
+                    .formatterDef(xmlProperty.propertyFormatter)
+                    .formatterAttr(xmlProperty.formatter)
+                    .build();
+        PropertyFormatter formatter =
+            FormatterFactory.instance()
+                .createPropertyFormatter(formatterContext);
+
+        return new RolapProperty(
+            xmlProperty.name,
+            datatype,
+            exp,
+            formatter,
+            xmlProperty.caption,
+            xmlProperty.dependsOnLevelValue,
+            false,
+            xmlProperty.description);
+    }
+
+    /**
+     * Reads a level's {@code levelType}. Treats an empty value as Regular:
+     * schemas written while attribute levels ignored this attribute commonly
+     * carry {@code levelType=""}, which would otherwise fail to parse now that
+     * the value is honoured.
+     */
+    private static LevelType toLevelType(String levelType) {
+        if (levelType == null || levelType.isEmpty()) {
+            return LevelType.Regular;
+        }
+        return LevelType.valueOf(
+            levelType.equals("TimeHalfYear") ? "TimeHalfYears" : levelType);
     }
 
     private static Property.Datatype convertPropertyTypeNameToCode(

@@ -368,6 +368,8 @@ public class RolapSchema implements Schema {
             // throw error if we have an incompatible schema
             checkSchemaVersion(def);
 
+            checkSchemaValidity(catalogStr, catalogUrl);
+
             xmlSchema = new MondrianDef.Schema(def);
 
             if (getLogger().isDebugEnabled()) {
@@ -390,6 +392,46 @@ public class RolapSchema implements Schema {
 
         aggTableManager.initialize(connectInfo);
         setSchemaLoadDate();
+    }
+
+    /**
+     * Applies {@link mondrian.olap.SchemaValidator} -- the single definition of
+     * the schema rules -- refusing to load on any error and logging the
+     * warnings, which are legal but usually unintended.
+     */
+    private void checkSchemaValidity(
+        String catalogStr, final String catalogUrl)
+    {
+        if (catalogStr == null) {
+            // Only computed above when debugging or hashing; the validator needs
+            // the text the author wrote, which the parsed DOM cannot reproduce.
+            try {
+                catalogStr = Util.readVirtualFileAsString(catalogUrl);
+            } catch (java.io.IOException e) {
+                getLogger().warn(
+                    "Skipping schema validation, could not re-read " + catalogUrl, e);
+                return;
+            }
+        }
+        final List<mondrian.olap.SchemaValidator.Finding> findings =
+            mondrian.olap.SchemaValidator.validate(catalogStr);
+        final List<mondrian.olap.SchemaValidator.Finding> errors =
+            mondrian.olap.SchemaValidator.errorsIn(findings);
+
+        for (mondrian.olap.SchemaValidator.Finding finding : findings) {
+            if (!finding.isError()) {
+                getLogger().warn(
+                    "Schema " + catalogUrl + ": " + finding.getMessage());
+            }
+        }
+        if (!errors.isEmpty()) {
+            final StringBuilder buf = new StringBuilder(
+                "Invalid schema " + catalogUrl + ":");
+            for (mondrian.olap.SchemaValidator.Finding error : errors) {
+                buf.append("\n  ").append(error.getMessage());
+            }
+            throw Util.newError(buf.toString());
+        }
     }
 
     private void checkSchemaVersion(final DOMWrapper schemaDom) {

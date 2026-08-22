@@ -158,9 +158,11 @@ Revision is $Id$
                 and avoid caching.
             </Doc>
         </Attribute>
-        <Attribute name="table" required="false">NameColumn
+        <Attribute name="table" required="false">
             <Doc>
                 The name of the table that contains this dimension's data.
+                May name a Table or a schema-level View alias. If omitted, the
+                cube's fact table is used as the dimension's source.
             </Doc>
         </Attribute>
         <Attribute name="primaryKey" required="false">
@@ -632,8 +634,8 @@ Revision is $Id$
                 A bit mask that determines the source of the hierarchy:
                 MD_ORIGIN_USER_DEFINED identifies levels in a user defined hierarchy (0x0000001).
                 MD_ORIGIN_ATTRIBUTE identifies levels in an attribute hierarchy (0x0000002).
-                MD_ORIGIN_INTERNAL identifies levels in attribute hierarchies that are not enabled (0x0000004).
-                MD_ORIGIN_KEY_ATTRIBUTE identifies levels in a key attribute hierarchy (0x0000008).
+                MD_ORIGIN_KEY_ATTRIBUTE identifies levels in a key attribute hierarchy (0x0000004).
+                MD_ORIGIN_INTERNAL identifies levels in attribute hierarchies that are not enabled (0x0000008).
 
                 The default value is MD_ORIGIN_USER_DEFINED. For Measure it is MD_ORIGIN_ATTRIBUTE &amp; MD_ORIGIN_INTERNAL (0x0000006)
             </Doc>
@@ -947,10 +949,22 @@ Revision is $Id$
         </Doc>
         <Attribute name="name"><Doc></Doc></Attribute>
         <Attribute name="column"><Doc></Doc></Attribute>
+        <Attribute name="sourceAttribute" required="false">
+            <Doc>
+                References a DimensionAttribute defined in the parent dimension's
+                attributes collection. The property's column and data type are taken
+                from that attribute's KeyColumn, so the column is stated once.
+                Use instead of column, not alongside it. The referenced attribute
+                usually sets attributeHierarchyEnabled="false", so that it supplies
+                a member property without also becoming a browsable hierarchy.
+            </Doc>
+        </Attribute>
         <Attribute name="type" default="String">
             <Doc>
                 Data type of this property:
                 String, Numeric, Integer, Boolean, Date, Time or Timestamp.
+                Ignored when sourceAttribute is used - the attribute's
+                KeyColumn dataType wins.
             </Doc>
             <Value>String</Value>
             <Value>Numeric</Value>
@@ -2684,6 +2698,26 @@ Revision is $Id$
         </Attribute>
         <Attribute name="attributeHierarchyDisplayFolder" type="String">
             <Doc>The display folder for the attribute hierarchy.</Doc>
+        </Attribute>
+        <Attribute name="levelType" required="false" default="Regular">
+            <Doc>
+                Whether this attribute is regular or time-related. Applied to the
+                attribute's own generated hierarchy, and required for every
+                attribute of a time dimension: a dimension is treated as a time
+                dimension when any of its levels is time-typed, and all of its
+                other levels must then be time-typed too.
+            </Doc>
+            <Value>Regular</Value>
+            <Value>TimeYears</Value>
+            <Value>TimeHalfYears</Value>
+            <Value>TimeQuarters</Value>
+            <Value>TimeMonths</Value>
+            <Value>TimeWeeks</Value>
+            <Value>TimeDays</Value>
+            <Value>TimeHours</Value>
+            <Value>TimeMinutes</Value>
+            <Value>TimeSeconds</Value>
+            <Value>TimeUndefined</Value>
         </Attribute>
         <Object name="keyColumn" type="KeyColumn">
             <Doc>The column that defines the key for the attribute.</Doc>
