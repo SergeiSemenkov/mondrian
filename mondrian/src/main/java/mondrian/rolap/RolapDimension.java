@@ -136,6 +136,19 @@ class RolapDimension extends DimensionBase {
 
         this.xmlCubeDimension = xmlCubeDimension;
 
+        // A shared dimension states its table once, on the <Dimension>; every
+        // usage of it (DimensionUsage, VirtualCubeDimension) then inherits it
+        // unless it overrides the table itself. Without this, usages that
+        // cannot carry a table of their own -- VirtualCubeDimension in
+        // particular -- would fall back to the cube's fact table.
+        if (xmlCubeDimension != null
+            && xmlCubeDimension != xmlDimension
+            && Util.isEmpty(xmlCubeDimension.table)
+            && !Util.isEmpty(xmlDimension.table))
+        {
+            xmlCubeDimension.table = xmlDimension.table;
+        }
+
         // Store the XML attributes
         this.xmlAttributes = xmlDimension.Attributes;
 

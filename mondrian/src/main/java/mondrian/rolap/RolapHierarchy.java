@@ -248,7 +248,20 @@ public class RolapHierarchy extends HierarchyBase {
             MondrianDef.Relation relation = null;
 
             String tableId = xmlCubeDimension.table;
-            String tableAlias = tableId + "_" + xmlCubeDimension.name;
+            // A shared dimension is aliased by its name alone, so every cube
+            // that uses it -- including a virtual cube, which cannot state a
+            // table of its own -- resolves to the same alias. A private
+            // dimension keeps the table-qualified alias: two cubes over one
+            // fact table share a RolapStar, and same-named private dimensions
+            // on different tables would otherwise collide there (e.g. Sales
+            // and Sales Ragged each have a "Store" dimension, on "store" and
+            // "store_ragged" respectively).
+            boolean shared =
+                xmlCubeDimension instanceof MondrianDef.DimensionUsage
+                || xmlCubeDimension instanceof MondrianDef.VirtualCubeDimension;
+            String tableAlias = shared
+                ? xmlCubeDimension.name
+                : tableId + "_" + xmlCubeDimension.name;
 
             MondrianDef.Schema xmlSchema = getRolapSchema().getXMLSchema();
             // Search only in Schema.views collection

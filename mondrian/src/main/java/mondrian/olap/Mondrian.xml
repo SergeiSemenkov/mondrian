@@ -2141,6 +2141,14 @@ Revision is $Id$
             }
 
             public String getGenericExpression() {
+                if (genericExpression == null && name != null) {
+                    // The convenience constructor precomputes this, but a Column
+                    // built field-by-field (by XOM, or by code assembling one for
+                    // an attribute-backed level) never runs it. Segment cache keys
+                    // NPE on a null generic expression, so derive it on demand.
+                    genericExpression =
+                        table == null ? name : (table + "." + name);
+                }
                 return genericExpression;
             }
 

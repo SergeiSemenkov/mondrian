@@ -381,13 +381,32 @@ public class RolapLevel extends LevelBase {
             column.name = sourceAttr.keyColumn.columnName;
             keyExp = column;
 
-            nameExp = null;
+            // A level that names its own nameColumn/<NameExpression> means
+            // member identity (and therefore the member's unique name) follows
+            // that column. Without this the setting was silently dropped, and
+            // a dimension whose member names come from a different column than
+            // its key could not be expressed with attributes at all.
+            if (xmlLevel.nameColumn != null) {
+                MondrianDef.Column nameColumnExp = new MondrianDef.Column();
+                nameColumnExp.table = dimensionTable;
+                nameColumnExp.name = xmlLevel.nameColumn;
+                nameExp = nameColumnExp;
+            } else if (xmlLevel.nameExp != null) {
+                // An explicit <NameExpression> carries its own SQL, including
+                // whatever tables it references, so it needs no rebinding.
+                nameExp = xmlLevel.nameExp;
+            } else {
+                nameExp = null;
+            }
 
             if (sourceAttr.nameColumn != null) {
-                column = new MondrianDef.Column();
-                column.table = dimensionTable;
-                column.name = sourceAttr.nameColumn.columnName;
-                captionExp = column;
+                column = new MondrianDef.Column(
+                    dimensionTable, sourceAttr.nameColumn.columnName);
+                // A caption on the same column the member is already named by
+                // adds nothing, and the member-reading SQL would select that
+                // column once while the reader expects a slot for each of the
+                // name and the caption -- shifting every property that follows.
+                captionExp = column.equals(nameExp) ? null : column;
             }
             else {
                 captionExp = null;
@@ -417,7 +436,8 @@ public class RolapLevel extends LevelBase {
             nullParentValue = xmlLevel.nullParentValue;
             closure = xmlLevel.closure;
             properties = createAttributeProperties(
-                xmlLevel, dimensionTable, (RolapDimension) hierarchy.getDimension());
+                xmlLevel, dimensionTable, (RolapDimension) hierarchy.getDimension(),
+                nameExp);
             internalType = null;
             hideMemberCondition =
                 HideMemberCondition.valueOf(xmlLevel.hideMemberIf);
@@ -517,13 +537,28 @@ public class RolapLevel extends LevelBase {
      * {@code Level.table}, which such a level does not set. Every column is
      * bound to {@code dimensionTable} instead, the same table the level's own
      * key, caption and ordinal columns use.
+     *
+     * @param nameExp expression supplying the member name, or null if members
+     *     are named by their key
      */
     private static RolapProperty[] createAttributeProperties(
         MondrianDef.Level xmlLevel,
         String dimensionTable,
-        RolapDimension dimension)
+        RolapDimension dimension,
+        MondrianDef.Expression nameExp)
     {
         List<RolapProperty> list = new ArrayList<RolapProperty>();
+
+        // A member's name is read through the NAME property, so a level that
+        // names its own nameColumn only takes effect if that property exists --
+        // the same injection the classic path does in createProperties.
+        if (nameExp != null) {
+            list.add(
+                new RolapProperty(
+                    Property.NAME.name, Property.Datatype.TYPE_STRING,
+                    nameExp, null, null, null, true,
+                    Property.NAME.description));
+        }
         for (MondrianDef.Property xmlProperty : xmlLevel.properties) {
             final String columnName;
             final String dataType;

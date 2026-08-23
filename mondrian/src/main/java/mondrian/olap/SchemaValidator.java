@@ -108,8 +108,16 @@ public class SchemaValidator {
         "name", "column", "sourceAttribute", "type", "formatter", "caption",
         "description", "dependsOnLevelValue");
 
+    private static final Set<String> VIRTUAL_CUBE_DIMENSION_ATTRS = Set.of(
+        "name", "cubeName", "caption", "description", "visible", "usagePrefix",
+        "foreignKey", "highCardinality", "table", "primaryKey", "source", "level");
+
     private static final Set<String> COLUMN_TAGS = Set.of(
         "KeyColumn", "NameColumn", "OrderByColumn", "ValueColumn");
+
+    /** Elements that give a hierarchy a relation of its own. */
+    private static final Set<String> RELATION_TAGS = Set.of(
+        "Table", "View", "Join", "InlineTable");
 
     private SchemaValidator() {
     }
@@ -130,7 +138,9 @@ public class SchemaValidator {
             throw Util.newError(e, "while parsing schema for validation");
         }
         List<Finding> findings = new ArrayList<>();
-        collectDimensions(document.getDocumentElement(), findings);
+        Element root = document.getDocumentElement();
+        collectDimensions(root, findings);
+        collectVirtualCubes(root, findings);
         return findings;
     }
 
@@ -284,7 +294,11 @@ public class SchemaValidator {
                 + " The primaryKey wins, so the join uses '" + primaryKey + "'."
                 + " Remove primaryKey, or point the key attribute at the same column."));
         }
-        if (!"false".equals(attr(keyAttribute, "attributeHierarchyVisible"))) {
+        // An attribute with attributeHierarchyEnabled='false' generates no
+        // hierarchy at all, so there is nothing for clients to see.
+        if (!"false".equals(attr(keyAttribute, "attributeHierarchyVisible"))
+            && !"false".equals(attr(keyAttribute, "attributeHierarchyEnabled")))
+        {
             findings.add(warn(
                 where + " key attribute '" + keyName + "' is visible to clients;"
                 + " key attributes are usually ID columns and should set"
@@ -385,6 +399,145 @@ public class SchemaValidator {
                     + " ignores silently (check spelling)."));
             }
         }
+    }
+
+    private static void collectVirtualCubes(Element root, List<Finding> findings) {
+        // Index by name once: a VirtualCubeDimension is a reference, so every
+        // rule about it is a question about something declared elsewhere.
+        Map<String, Element> sharedDimensions = new LinkedHashMap<>();
+        for (Element dimension : childrenNamed(root, "Dimension")) {
+            sharedDimensions.put(attr(dimension, "name"), dimension);
+        }
+        Map<String, Element> cubes = new LinkedHashMap<>();
+        for (Element cube : childrenNamed(root, "Cube")) {
+            cubes.put(attr(cube, "name"), cube);
+        }
+
+        for (Element virtualCube : childrenNamed(root, "VirtualCube")) {
+            String virtualCubeName = attr(virtualCube, "name");
+            for (Element reference
+                : childrenNamed(virtualCube, "VirtualCubeDimension"))
+            {
+                validateVirtualCubeDimension(
+                    reference, virtualCubeName, cubes, sharedDimensions, findings);
+            }
+        }
+    }
+
+    private static void validateVirtualCubeDimension(
+        Element reference,
+        String virtualCubeName,
+        Map<String, Element> cubes,
+        Map<String, Element> sharedDimensions,
+        List<Finding> findings)
+    {
+        String dimensionName = attr(reference, "name");
+        String cubeName = attr(reference, "cubeName");
+        String where = "VirtualCube '" + virtualCubeName
+            + "', dimension '" + dimensionName + "'";
+        checkUnknownAttributes(
+            reference, VIRTUAL_CUBE_DIMENSION_ATTRS, where, findings);
+
+        if (dimensionName.isEmpty()) {
+            findings.add(error(where + " has no name."));
+            return;
+        }
+
+        // Resolve the dimension the same way MondrianDef.VirtualCubeDimension
+        // does: from the named cube, or from the shared dimensions.
+        Element dimension;
+        if (cubeName.isEmpty()) {
+            dimension = sharedDimensions.get(dimensionName);
+            if (dimension == null) {
+                findings.add(error(
+                    where + " sets no cubeName, so it refers to a shared"
+                    + " dimension, but the schema declares no shared Dimension"
+                    + " named '" + dimensionName + "'."));
+                return;
+            }
+        } else {
+            Element cube = cubes.get(cubeName);
+            if (cube == null) {
+                findings.add(error(
+                    where + " refers to cube '" + cubeName + "', which the"
+                    + " schema does not declare."));
+                return;
+            }
+            dimension = dimensionOfCube(cube, dimensionName, sharedDimensions);
+            if (dimension == null) {
+                findings.add(error(
+                    where + " refers to cube '" + cubeName + "', which has no"
+                    + " dimension named '" + dimensionName + "'."));
+                return;
+            }
+        }
+
+        // A hierarchy with no relation of its own falls back to the cube's fact
+        // table. A virtual cube has no fact table, so it borrows the one behind
+        // cubeName -- and without cubeName there is nothing to borrow, leaving
+        // the hierarchy with no relation at all.
+        if (cubeName.isEmpty() && needsFactTable(dimension)) {
+            findings.add(error(
+                where + " sets no cubeName, but dimension '" + dimensionName
+                + "' has a hierarchy with no relation of its own, so it can only"
+                + " bind to a fact table. A virtual cube has none: set cubeName"
+                + " to the cube whose fact table it should use, or give the"
+                + " dimension a table."));
+        }
+    }
+
+    /**
+     * Finds the dimension a cube exposes under {@code dimensionName}, whether
+     * declared inline or brought in by a DimensionUsage.
+     */
+    private static Element dimensionOfCube(
+        Element cube, String dimensionName, Map<String, Element> sharedDimensions)
+    {
+        for (Element child : elementChildren(cube)) {
+            if (!dimensionName.equals(attr(child, "name"))) {
+                continue;
+            }
+            if ("Dimension".equals(child.getTagName())) {
+                return child;
+            }
+            if ("DimensionUsage".equals(child.getTagName())) {
+                // The usage names the dimension; the shared declaration holds
+                // the hierarchies the rules below ask about.
+                String source = attr(child, "source");
+                Element shared = sharedDimensions.get(
+                    source.isEmpty() ? dimensionName : source);
+                return shared != null ? shared : child;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns whether any hierarchy of {@code dimension} would have to take its
+     * relation from the cube's fact table.
+     */
+    private static boolean needsFactTable(Element dimension) {
+        if (!attr(dimension, "table").isEmpty()) {
+            // The dimension names its own table; every hierarchy uses it.
+            return false;
+        }
+        // Hierarchies generated from attributes carry no relation of their own.
+        if (!childrenNamed(dimension, "DimensionAttribute").isEmpty()) {
+            return true;
+        }
+        for (Element hierarchy : childrenNamed(dimension, "Hierarchy")) {
+            boolean hasRelation = false;
+            for (Element child : elementChildren(hierarchy)) {
+                if (RELATION_TAGS.contains(child.getTagName())) {
+                    hasRelation = true;
+                    break;
+                }
+            }
+            if (!hasRelation) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static List<Element> childrenNamed(Element parent, String tagName) {
