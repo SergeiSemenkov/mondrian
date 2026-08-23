@@ -10,6 +10,8 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+import mondrian.server.ServerPermissions;
+
 import org.apache.logging.log4j.core.LoggerContext;
 import org.apache.logging.log4j.core.appender.FileAppender;
 import org.apache.logging.log4j.core.appender.RollingRandomAccessFileAppender;
@@ -27,6 +29,20 @@ public class LogResource extends HttpServlet {
     @Override
     public void doGet(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
+
+        final ServerPermissions.Identity identity =
+                ServerPermissions.identity(request);
+        if (!ServerPermissions.isGrantedByAnyCatalog(
+                getServletContext(),
+                identity,
+                ServerPermissions.Capability.LOGS_READ))
+        {
+            response.sendError(
+                    HttpServletResponse.SC_FORBIDDEN,
+                    ServerPermissions.denialMessage(
+                            identity, ServerPermissions.Capability.LOGS_READ));
+            return;
+        }
 
         response.setCharacterEncoding("UTF-8");
         String catalinaHome = System.getProperty("catalina.home");

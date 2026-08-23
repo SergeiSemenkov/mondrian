@@ -19,6 +19,7 @@ import mondrian.rolap.RolapHierarchy;
 import mondrian.rolap.RolapSchema;
 import mondrian.server.FileRepository;
 import mondrian.server.MondrianServerImpl;
+import mondrian.server.ServerPermissions;
 import mondrian.util.Composite;
 
 import org.olap4j.OlapConnection;
@@ -2522,6 +2523,16 @@ public enum RowsetDefinition {
                                     .getMondrianConnection());
 
                     mondrian.server.Repository repository = mondrianServer.getRepository();
+                    // datasources.xml carries every catalog's connect string,
+                    // credentials included, so reading it is an administrative
+                    // capability of its own -- separate from the ordinary
+                    // catalog discovery clients do on every connect.
+                    XmlaHandler.checkServerPermission(
+                            repository,
+                            ((mondrian.olap4j.MondrianOlap4jConnection) connection)
+                                    .getMondrianConnection(),
+                            this.request,
+                            ServerPermissions.Capability.DATABASE_READ);
                     if(repository instanceof FileRepository) {
                         FileRepository fileRepository = (FileRepository)repository;
                         String repositoryContent = fileRepository.getContent();
@@ -2553,7 +2564,13 @@ public enum RowsetDefinition {
 
                         String catalogStr = null;
                         if(schemas != null && schemas.size() > 0) {
-                            String catalogUrl = schemas.entrySet().iterator().next().getValue().getInternalConnection().getCatalogUrl();
+                            RolapSchema rolapSchema =
+                                    schemas.entrySet().iterator().next().getValue();
+                            XmlaHandler.checkServerPermission(
+                                    rolapSchema,
+                                    this.request,
+                                    ServerPermissions.Capability.SCHEMA_READ);
+                            String catalogUrl = rolapSchema.getInternalConnection().getCatalogUrl();
                             catalogStr = Util.readVirtualFileAsString(catalogUrl);
                         }
 

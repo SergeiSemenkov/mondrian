@@ -2244,6 +2244,7 @@ Revision is $Id$
         <Object name="annotations" type="Annotations" required="false">
             <Doc>Contains values of user-defined properties.</Doc>
         </Object>
+        <Object name="serverGrant" type="ServerGrant" required="false"/>
         <Array name="schemaGrants" type="SchemaGrant"/>
         <Object name="union" type="Union" required="false" />
         <Array name="members" type="RoleMember"/>
@@ -2368,6 +2369,59 @@ Revision is $Id$
             User name or member group name.
         </Doc>
         <Attribute name="name" required="true"/>
+    </Element>
+
+    <Element type="ServerGrant">
+        <Doc>
+            Grants this role administrative capabilities on the server itself.
+            Unlike SchemaGrant/CubeGrant/HierarchyGrant, which control access to
+            <em>data</em>, these control access to the operations that manage the
+            server: editing schema files, editing the catalog registry
+            (datasources.xml), reading log files and installing license files.
+
+            <p>A user is granted a capability if any role they are a member of
+            (see RoleMember) grants it; the most permissive value wins. Users who
+            are not authenticated, or who match no role, are resolved against the
+            role named by the schema's <code>defaultRole</code> attribute.</p>
+
+            <p>For backwards compatibility, if no role in the schema declares a
+            ServerGrant at all, none of these capabilities is enforced. Enforcement
+            begins as soon as the first ServerGrant appears.</p>
+        </Doc>
+        <Attribute name="schema" required="false" default="none">
+            <Doc>
+                Access to the schema XML of this catalog, via the XML/A
+                DISCOVER_XML_METADATA request and the Alter command with
+                ObjectType=Schema. "write" implies "read".
+            </Doc>
+            <Value>none</Value>
+            <Value>read</Value>
+            <Value>write</Value>
+        </Attribute>
+        <Attribute name="database" required="false" default="none">
+            <Doc>
+                Access to the catalog registry (datasources.xml) as a document,
+                via DISCOVER_XML_METADATA and Alter with ObjectType=Database.
+                "manage" implies "read". This does not affect ordinary catalog
+                discovery (DBSCHEMA_CATALOGS, DISCOVER_DATASOURCES) or query
+                execution, which remain governed by the data grants.
+            </Doc>
+            <Value>none</Value>
+            <Value>read</Value>
+            <Value>manage</Value>
+        </Attribute>
+        <Attribute name="logs" required="false" default="none">
+            <Doc>Access to the server's log files.</Doc>
+            <Value>none</Value>
+            <Value>read</Value>
+        </Attribute>
+        <Attribute name="license" required="false" default="none">
+            <Doc>
+                Access to install, replace and revoke the server's license files.
+            </Doc>
+            <Value>none</Value>
+            <Value>manage</Value>
+        </Attribute>
     </Element>
     <!-- Union ============================================================ -->
     <Element type="Union">

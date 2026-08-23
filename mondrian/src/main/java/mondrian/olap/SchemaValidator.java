@@ -141,7 +141,77 @@ public class SchemaValidator {
         Element root = document.getDocumentElement();
         collectDimensions(root, findings);
         collectVirtualCubes(root, findings);
+        collectRoles(root, findings);
         return findings;
+    }
+
+    /**
+     * Declared child order of a {@code <Role>}, per Mondrian.xml. The XML
+     * parser reads children with a single forward cursor, so a child that
+     * appears out of this order is not merely cosmetic: it is skipped, along
+     * with everything the cursor has already advanced past. A {@code
+     * <ServerGrant>} placed after {@code <SchemaGrant>}, for instance, is
+     * dropped silently -- and so is every {@code <RoleMember>} after it, which
+     * would quietly turn an access-control rule into no rule at all. Checking
+     * the order here turns that into a load failure instead.
+     */
+    private static final List<String> ROLE_CHILD_ORDER = List.of(
+        "Annotations", "ServerGrant", "SchemaGrant", "Union", "RoleMember");
+
+    private static void collectRoles(Element element, List<Finding> findings) {
+        NodeList children = element.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (!(node instanceof Element)) {
+                continue;
+            }
+            Element child = (Element) node;
+            if ("Role".equals(child.getTagName())) {
+                validateRoleChildOrder(child, findings);
+            } else {
+                collectRoles(child, findings);
+            }
+        }
+    }
+
+    private static void validateRoleChildOrder(
+        Element role, List<Finding> findings)
+    {
+        final String roleName = role.getAttribute("name");
+        final String where = roleName == null || roleName.isEmpty()
+            ? "Role" : "Role '" + roleName + "'";
+        int highestRankSeen = -1;
+        String highestTagSeen = null;
+        NodeList children = role.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (!(node instanceof Element)) {
+                continue;
+            }
+            final String tag = ((Element) node).getTagName();
+            final int rank = ROLE_CHILD_ORDER.indexOf(tag);
+            if (rank < 0) {
+                // Not a child this check knows about; leave it to the parser.
+                continue;
+            }
+            if (rank < highestRankSeen) {
+                findings.add(
+                    new Finding(
+                        Severity.ERROR,
+                        where + ": <" + tag + "> must come before <"
+                        + highestTagSeen + ">. Inside a <Role> the children"
+                        + " must appear in the order "
+                        + String.join(", ", ROLE_CHILD_ORDER)
+                        + "; one that is out of order is ignored when the"
+                        + " schema is read, silently dropping the access it"
+                        + " was meant to grant or deny."));
+                return;
+            }
+            if (rank > highestRankSeen) {
+                highestRankSeen = rank;
+                highestTagSeen = tag;
+            }
+        }
     }
 
     /** Returns only the errors from {@code findings}. */

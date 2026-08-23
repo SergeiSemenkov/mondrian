@@ -19,6 +19,7 @@ import mondrian.olap4j.IMondrianOlap4jProperty;
 import mondrian.olap4j.MondrianOlap4jConnection;
 import mondrian.rolap.SqlStatement;
 import mondrian.server.FileRepository;
+import mondrian.server.ServerPermissions;
 import mondrian.util.CompositeList;
 import mondrian.xmla.impl.DefaultSaxWriter;
 
@@ -71,6 +72,62 @@ import mondrian.server.Locus;
  */
 public class XmlaHandler {
     private static final Logger LOGGER = LogManager.getLogger(XmlaHandler.class);
+
+    /**
+     * The caller of an XML/A request, for role matching. Built from the
+     * authenticated user and groups an {@link XmlaRequestCallback} put on the
+     * request; anonymous when no callback is configured.
+     */
+    static ServerPermissions.Identity identityOf(XmlaRequest request) {
+        return ServerPermissions.identity(
+            request.getAuthenticatedUser(),
+            request.getAuthenticatedUserGroups());
+    }
+
+    /**
+     * Throws unless the caller holds {@code capability} on {@code schema}, for
+     * the capabilities that are scoped to one catalog.
+     */
+    static void checkServerPermission(
+        mondrian.rolap.RolapSchema schema,
+        XmlaRequest request,
+        ServerPermissions.Capability capability)
+        throws XmlaException
+    {
+        final ServerPermissions.Identity identity = identityOf(request);
+        if (!ServerPermissions.isGranted(schema, identity, capability)) {
+            throw new XmlaException(
+                CLIENT_FAULT_FC,
+                HSB_ACCESS_DENIED_CODE,
+                HSB_ACCESS_DENIED_FAULT_FS,
+                new SecurityException(
+                    ServerPermissions.denialMessage(identity, capability)));
+        }
+    }
+
+    /**
+     * Throws unless the caller holds {@code capability} on some catalog, for
+     * the capabilities that are server-wide rather than scoped to one catalog.
+     */
+    static void checkServerPermission(
+        mondrian.server.Repository repository,
+        mondrian.rolap.RolapConnection connection,
+        XmlaRequest request,
+        ServerPermissions.Capability capability)
+        throws XmlaException
+    {
+        final ServerPermissions.Identity identity = identityOf(request);
+        if (!ServerPermissions.isGrantedByAnyCatalog(
+                repository, connection, identity, capability))
+        {
+            throw new XmlaException(
+                CLIENT_FAULT_FC,
+                HSB_ACCESS_DENIED_CODE,
+                HSB_ACCESS_DENIED_FAULT_FS,
+                new SecurityException(
+                    ServerPermissions.denialMessage(identity, capability)));
+        }
+    }
 
     /**
      * Name of property used by JDBC to hold user name.
@@ -223,42 +280,17 @@ public class XmlaHandler {
                 request.getRoleName(),
                 props );
 
-        ArrayList<String> authenticatedUserAndGroups = new ArrayList<String>();
-        if(request.getAuthenticatedUser() != null) {
-            authenticatedUserAndGroups.add(request.getAuthenticatedUser());
-        }
-        if(request.getAuthenticatedUserGroups() != null) {
-            authenticatedUserAndGroups.addAll(Arrays.asList(request.getAuthenticatedUserGroups()));
-        }
-        if(authenticatedUserAndGroups.size() > 0) {
-            ArrayList<String> roles = new ArrayList<String>();
-
+        final ServerPermissions.Identity identity = identityOf(request);
+        if (identity != ServerPermissions.ANONYMOUS) {
             RolapSchema rolapSchema = ((MondrianOlap4jConnection)connection).getMondrianConnection().getSchema();
-            MondrianDef.Schema xmlSchema = rolapSchema.getXMLSchema();
 
-            for(MondrianDef.Role role: xmlSchema.roles) {
-                for(MondrianDef.RoleMember roleMember: role.members) {
-                    boolean inRole = false;
-                    if( roleMember.name != null) {
-                        String roleMemberName = roleMember.name.trim().toLowerCase(Locale.ROOT);
-                        for (String aRole : authenticatedUserAndGroups) {
-                            if (roleMemberName.equals(aRole.toLowerCase(Locale.ROOT))){
-                                roles.add(role.name);
-                                inRole = true;
-                                break;
-                            }
-                        }
-                    }
-                    if(inRole) {
-                        break;
-                    }
-                }
-            }
+            // The engine substitutes the schema's defaultRole for a connection
+            // that names no role, so only explicit matches are set here.
+            List<String> roles = ServerPermissions.matchRoleNames(
+                rolapSchema.getXMLSchema(), identity, false);
             if(roles.size() > 0) {
                 ((MondrianOlap4jConnection) connection).setRoleNames(roles);
             }
-
-
         }
         String localeIdentifier = request.getProperties().get("LocaleIdentifier");
         Locale locale = XmlaUtil.convertToLocale( localeIdentifier );
@@ -926,6 +958,11 @@ public class XmlaHandler {
                     final mondrian.olap.MondrianServer mondrianServer =
                             mondrian.olap.MondrianServer.forConnection(rolapConnection1);
                     final mondrian.server.Repository repository = mondrianServer.getRepository();
+                    checkServerPermission(
+                            repository,
+                            rolapConnection1,
+                            request,
+                            ServerPermissions.Capability.DATABASE_MANAGE);
                     if(repository instanceof FileRepository) {
                         mondrian.server.FileRepository fileRepository = (FileRepository)repository;
                         final String objectDefinition = ((mondrian.xmla.impl.DefaultXmlaRequest) request).getObjectDefinition();
@@ -946,6 +983,16 @@ public class XmlaHandler {
 
                             //Try to create a schema to check xml.
                             mondrian.rolap.RolapSchema prevSchema = rolapConnection1.getSchema();
+
+                            // Validating parses the candidate XML and reports on
+                            // it without touching the live file; only the branch
+                            // below actually rewrites the schema.
+                            checkServerPermission(
+                                    prevSchema,
+                                    request,
+                                    validate
+                                            ? ServerPermissions.Capability.SCHEMA_READ
+                                            : ServerPermissions.Capability.SCHEMA_WRITE);
 
                             if (validate) {
 //                        if (true) {
