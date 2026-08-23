@@ -106,20 +106,18 @@ public class XmlaHandler {
     }
 
     /**
-     * Throws unless the caller holds {@code capability} on some catalog, for
-     * the capabilities that are server-wide rather than scoped to one catalog.
+     * Throws unless the caller holds {@code capability}, for the capabilities
+     * that are server-wide rather than scoped to one catalog. Those are granted
+     * only by the {@code mondrian.security.*} properties -- never by a schema,
+     * which the server itself can be made to rewrite.
      */
     static void checkServerPermission(
-        mondrian.server.Repository repository,
-        mondrian.rolap.RolapConnection connection,
         XmlaRequest request,
         ServerPermissions.Capability capability)
         throws XmlaException
     {
         final ServerPermissions.Identity identity = identityOf(request);
-        if (!ServerPermissions.isGrantedByAnyCatalog(
-                repository, connection, identity, capability))
-        {
+        if (!ServerPermissions.isGrantedAtServerLevel(identity, capability)) {
             throw new XmlaException(
                 CLIENT_FAULT_FC,
                 HSB_ACCESS_DENIED_CODE,
@@ -952,17 +950,15 @@ public class XmlaHandler {
                 boolean alterSchema = "Schema".equals(defaultXmlaRequest.getProperties().get("ObjectType"));
 
                 if(alterDatabase) {
+                    checkServerPermission(
+                            request,
+                            ServerPermissions.Capability.DATABASE_MANAGE);
                     final OlapConnection connection1 = getConnection(request, Collections.<String, String>emptyMap());
                     final mondrian.rolap.RolapConnection rolapConnection1 =
                             ((mondrian.olap4j.MondrianOlap4jConnection) connection1).getMondrianConnection();
                     final mondrian.olap.MondrianServer mondrianServer =
                             mondrian.olap.MondrianServer.forConnection(rolapConnection1);
                     final mondrian.server.Repository repository = mondrianServer.getRepository();
-                    checkServerPermission(
-                            repository,
-                            rolapConnection1,
-                            request,
-                            ServerPermissions.Capability.DATABASE_MANAGE);
                     if(repository instanceof FileRepository) {
                         mondrian.server.FileRepository fileRepository = (FileRepository)repository;
                         final String objectDefinition = ((mondrian.xmla.impl.DefaultXmlaRequest) request).getObjectDefinition();

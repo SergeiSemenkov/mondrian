@@ -149,14 +149,14 @@ public class SchemaValidator {
      * Declared child order of a {@code <Role>}, per Mondrian.xml. The XML
      * parser reads children with a single forward cursor, so a child that
      * appears out of this order is not merely cosmetic: it is skipped, along
-     * with everything the cursor has already advanced past. A {@code
-     * <ServerGrant>} placed after {@code <SchemaGrant>}, for instance, is
-     * dropped silently -- and so is every {@code <RoleMember>} after it, which
-     * would quietly turn an access-control rule into no rule at all. Checking
-     * the order here turns that into a load failure instead.
+     * with everything the cursor has already advanced past. A {@code <Union>}
+     * placed before {@code <SchemaGrant>}, for instance, drops the
+     * {@code <SchemaGrant>} silently -- and every {@code <RoleMember>} after
+     * it, which would quietly turn an access-control rule into no rule at all.
+     * Checking the order here turns that into a load failure instead.
      */
     private static final List<String> ROLE_CHILD_ORDER = List.of(
-        "Annotations", "ServerGrant", "SchemaGrant", "Union", "RoleMember");
+        "Annotations", "SchemaGrant", "Union", "RoleMember");
 
     private static void collectRoles(Element element, List<Finding> findings) {
         NodeList children = element.getChildNodes();
@@ -168,9 +168,57 @@ public class SchemaValidator {
             Element child = (Element) node;
             if ("Role".equals(child.getTagName())) {
                 validateRoleChildOrder(child, findings);
+                validateNoServerGrant(child, findings);
             } else {
                 collectRoles(child, findings);
             }
+        }
+    }
+
+    /**
+     * Rejects the {@code <ServerGrant>} element that earlier versions accepted
+     * inside a {@code <Role>}.
+     *
+     * <p>Its {@code schema} attribute is now {@code schemaAccess} on the
+     * {@code <Role>} itself; its {@code database}, {@code logs} and
+     * {@code license} attributes have moved out of the schema altogether, into
+     * {@code mondrian.properties}. That move is the point: a schema file is
+     * editable through the server, so anyone able to write one could otherwise
+     * grant themselves -- or everyone, via the schema's {@code defaultRole} --
+     * the right to read logs, rewrite {@code datasources.xml} and install
+     * license files.</p>
+     *
+     * <p>This is an error rather than a warning because the alternative is
+     * silence: the element would simply be ignored, and a deployment that
+     * believed itself locked down would be wide open.</p>
+     */
+    private static void validateNoServerGrant(
+        Element role, List<Finding> findings)
+    {
+        final String roleName = role.getAttribute("name");
+        final String where = roleName == null || roleName.isEmpty()
+            ? "Role" : "Role '" + roleName + "'";
+        NodeList children = role.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node node = children.item(i);
+            if (!(node instanceof Element)) {
+                continue;
+            }
+            if (!"ServerGrant".equals(((Element) node).getTagName())) {
+                continue;
+            }
+            findings.add(
+                new Finding(
+                    Severity.ERROR,
+                    where + ": <ServerGrant> is no longer part of a schema."
+                    + " Write schemaAccess=\"read|write\" on the <Role>"
+                    + " element itself for access to this catalog's schema"
+                    + " XML. The server-wide capabilities it used to carry"
+                    + " (database, logs, license) are now set in"
+                    + " mondrian.properties as"
+                    + " mondrian.security.role.<role>.<database|logs|license>,"
+                    + " outside any file the server itself can write."));
+            return;
         }
     }
 

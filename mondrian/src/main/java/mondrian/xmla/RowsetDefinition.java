@@ -2528,9 +2528,6 @@ public enum RowsetDefinition {
                     // capability of its own -- separate from the ordinary
                     // catalog discovery clients do on every connect.
                     XmlaHandler.checkServerPermission(
-                            repository,
-                            ((mondrian.olap4j.MondrianOlap4jConnection) connection)
-                                    .getMondrianConnection(),
                             this.request,
                             ServerPermissions.Capability.DATABASE_READ);
                     if(repository instanceof FileRepository) {

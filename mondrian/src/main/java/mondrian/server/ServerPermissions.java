@@ -11,7 +11,7 @@
 package mondrian.server;
 
 import mondrian.olap.MondrianDef;
-import mondrian.rolap.RolapConnection;
+import mondrian.olap.MondrianProperties;
 import mondrian.rolap.RolapSchema;
 import mondrian.xmla.DataSourcesConfig;
 
@@ -29,8 +29,10 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.security.Principal;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -38,17 +40,38 @@ import java.util.concurrent.ConcurrentHashMap;
  * schema files, editing the catalog registry (datasources.xml), reading log
  * files and installing license files.
  *
- * <p>These are granted by the same schema-level {@code <Role>} elements that
- * already control data access, through a {@code <ServerGrant>} child. A user
- * holds a capability if any role they are a member of (matched by
- * {@code <RoleMember>} against their user name or one of their groups) grants
- * it. Callers with no identity, and callers matching no role, are resolved
- * against the role named by the schema's {@code defaultRole} attribute.</p>
+ * <p>These are granted at two levels, because they have two different scopes:</p>
  *
- * <p>For backwards compatibility, a schema in which no role declares a
- * {@code <ServerGrant>} at all is treated as <em>unconfigured</em>: nothing is
- * enforced against it. Enforcement begins as soon as the first
- * {@code <ServerGrant>} appears.</p>
+ * <ul>
+ * <li><b>Reading and writing one catalog's schema XML</b> is scoped to that
+ * catalog, and is granted by the schema's own roles, with a
+ * {@code schemaAccess} attribute on {@code <Role>}.</li>
+ *
+ * <li><b>Reading logs, editing datasources.xml and installing licenses</b> are
+ * server-wide, and are configured in {@code mondrian.properties} (or as
+ * {@code -Dmondrian.security.*} system properties, which
+ * {@link mondrian.olap.MondrianPropertiesBase#populate} copies in), under
+ * {@code mondrian.security.role.<role>.<members|schema|database|logs|license>}
+ * plus {@code mondrian.security.defaultRole}.</li>
+ * </ul>
+ *
+ * <p>The split is not cosmetic. A schema file is itself editable through the
+ * server -- by {@code Alter ObjectType=Schema} and by the MCP
+ * {@code save_schema} tool -- so a server-wide right declared in one would be a
+ * right its holder could grant themselves, and (before this split) could grant
+ * to everyone by writing it onto the schema's {@code defaultRole}. Server-wide
+ * rights therefore live only where no endpoint can write them.</p>
+ *
+ * <p>A user holds a capability if any role they are a member of grants it.
+ * Callers with no identity, and callers matching no role, are resolved against
+ * the default role -- {@code mondrian.security.defaultRole} at server level, the
+ * schema's {@code defaultRole} attribute at catalog level.</p>
+ *
+ * <p>For backwards compatibility, an unconfigured capability is not enforced:
+ * with no {@code mondrian.security.role.*} property set, the server-wide
+ * capabilities are open, and with no role declaring {@code schemaAccess} at
+ * either level, schema access is open. Enforcement begins as soon as the first
+ * grant appears.</p>
  */
 public class ServerPermissions {
 
@@ -60,19 +83,43 @@ public class ServerPermissions {
 
     /** An administrative operation that a role may be granted. */
     public enum Capability {
-        SCHEMA_READ("schema", "read", "write"),
-        SCHEMA_WRITE("schema", "write"),
-        DATABASE_READ("database", "read", "manage"),
-        DATABASE_MANAGE("database", "manage"),
-        LOGS_READ("logs", "read"),
-        LICENSE_MANAGE("license", "manage");
+        SCHEMA_READ("schema", true, "read", "write"),
+        SCHEMA_WRITE("schema", true, "write"),
+        DATABASE_READ("database", false, "read", "manage"),
+        DATABASE_MANAGE("database", false, "manage"),
+        LOGS_READ("logs", false, "read"),
+        LICENSE_MANAGE("license", false, "manage");
 
         private final String attribute;
+        private final boolean catalogScoped;
         private final String[] satisfyingValues;
 
-        Capability(String attribute, String... satisfyingValues) {
+        Capability(
+            String attribute,
+            boolean catalogScoped,
+            String... satisfyingValues)
+        {
             this.attribute = attribute;
+            this.catalogScoped = catalogScoped;
             this.satisfyingValues = satisfyingValues;
+        }
+
+        /** The property/attribute name this capability is granted under. */
+        public String getAttribute() {
+            return attribute;
+        }
+
+        /** The least value that satisfies this capability. */
+        public String getRequiredValue() {
+            return satisfyingValues[0];
+        }
+
+        /**
+         * Whether this capability is scoped to a single catalog (and so can be
+         * granted by a schema), rather than server-wide.
+         */
+        public boolean isCatalogScoped() {
+            return catalogScoped;
         }
 
         /** Human-readable form used in error messages, e.g. {@code schema="write"}. */
@@ -80,29 +127,18 @@ public class ServerPermissions {
             return attribute + "=\"" + satisfyingValues[0] + "\"";
         }
 
-        boolean satisfiedBy(MondrianDef.ServerGrant grant) {
-            final String value = valueOf(grant);
+        /** Whether a granted value, as written in a schema or a property, suffices. */
+        boolean satisfiedBy(String value) {
             if (value == null) {
                 return false;
             }
+            final String trimmed = value.trim();
             for (String satisfying : satisfyingValues) {
-                if (satisfying.equalsIgnoreCase(value)) {
+                if (satisfying.equalsIgnoreCase(trimmed)) {
                     return true;
                 }
             }
             return false;
-        }
-
-        private String valueOf(MondrianDef.ServerGrant grant) {
-            if (attribute.equals("schema")) {
-                return grant.schema;
-            } else if (attribute.equals("database")) {
-                return grant.database;
-            } else if (attribute.equals("logs")) {
-                return grant.logs;
-            } else {
-                return grant.license;
-            }
         }
     }
 
@@ -253,7 +289,196 @@ public class ServerPermissions {
     }
 
     // -----------------------------------------------------------------------
-    // Role matching
+    // Server-level configuration
+    // -----------------------------------------------------------------------
+
+    /** Prefix of the properties that declare a server-level role. */
+    public static final String ROLE_PROPERTY_PREFIX = "mondrian.security.role.";
+
+    /** Property naming the role that callers matching no other role get. */
+    public static final String DEFAULT_ROLE_PROPERTY =
+        "mondrian.security.defaultRole";
+
+    /** Property suffix listing a server-level role's members. */
+    private static final String MEMBERS_SUFFIX = "members";
+
+    private static final Set<String> KNOWN_SUFFIXES = Set.of(
+        MEMBERS_SUFFIX, "schema", "database", "logs", "license");
+
+    /**
+     * Keys already reported as malformed. A permission check runs per request,
+     * so without this a single typo would be logged forever.
+     */
+    private static final Set<String> REPORTED_BAD_KEYS =
+        ConcurrentHashMap.newKeySet();
+
+    /** One server-level role: its members and the values it grants. */
+    private static class ServerRole {
+        final String name;
+        final List<String> members = new ArrayList<String>();
+        final Map<String, String> grants = new LinkedHashMap<String, String>();
+
+        ServerRole(String name) {
+            this.name = name;
+        }
+    }
+
+    /**
+     * Reads the {@code mondrian.security.*} properties.
+     *
+     * <p>Read afresh on every check rather than cached: the properties are
+     * loaded once by {@link MondrianProperties} and the checks happen only on
+     * administrative requests, so a cache here would buy nothing and could
+     * answer with a stale rule, which is the worst failure mode a permission
+     * check has.</p>
+     */
+    private static Map<String, ServerRole> serverRoles() {
+        final Map<String, ServerRole> roles =
+            new LinkedHashMap<String, ServerRole>();
+        final MondrianProperties properties = MondrianProperties.instance();
+        for (String key : properties.stringPropertyNames()) {
+            if (!key.startsWith(ROLE_PROPERTY_PREFIX)) {
+                continue;
+            }
+            final String remainder =
+                key.substring(ROLE_PROPERTY_PREFIX.length());
+            final int dot = remainder.lastIndexOf('.');
+            final String roleName = dot < 0 ? "" : remainder.substring(0, dot);
+            final String suffix = dot < 0 ? "" : remainder.substring(dot + 1);
+            if (roleName.isEmpty()
+                || roleName.indexOf('.') >= 0
+                || !KNOWN_SUFFIXES.contains(suffix))
+            {
+                if (REPORTED_BAD_KEYS.add(key)) {
+                    LOGGER.error(
+                        "ServerPermissions: ignoring property '" + key
+                        + "'. Server-level grants are declared as "
+                        + ROLE_PROPERTY_PREFIX + "<role>.<"
+                        + String.join("|", KNOWN_SUFFIXES)
+                        + ">, and <role> may not contain a dot.");
+                }
+                continue;
+            }
+            final String value = properties.getProperty(key);
+            ServerRole role = roles.get(roleName);
+            if (role == null) {
+                role = new ServerRole(roleName);
+                roles.put(roleName, role);
+            }
+            if (MEMBERS_SUFFIX.equals(suffix)) {
+                for (String member : splitGroups(value)) {
+                    role.members.add(member);
+                }
+            } else {
+                role.grants.put(suffix, value);
+            }
+        }
+        return roles;
+    }
+
+    /**
+     * The server-level roles {@code identity} is a member of, falling back to
+     * the role named by {@link #DEFAULT_ROLE_PROPERTY} when it matches none --
+     * so that anonymous and unrecognized callers are governed by whatever that
+     * role permits, exactly as a schema's {@code defaultRole} governs them for
+     * data.
+     */
+    private static List<ServerRole> matchServerRoles(
+        Map<String, ServerRole> roles,
+        Identity identity)
+    {
+        final List<ServerRole> matched = new ArrayList<ServerRole>();
+        if (identity != null) {
+            for (ServerRole role : roles.values()) {
+                for (String member : role.members) {
+                    if (identity.isMember(member)) {
+                        matched.add(role);
+                        break;
+                    }
+                }
+            }
+        }
+        if (matched.isEmpty()) {
+            final String defaultRole = MondrianProperties.instance()
+                .getProperty(DEFAULT_ROLE_PROPERTY);
+            if (defaultRole != null && !defaultRole.trim().isEmpty()) {
+                final ServerRole role = roles.get(defaultRole.trim());
+                if (role != null) {
+                    matched.add(role);
+                }
+            }
+        }
+        return matched;
+    }
+
+    // -----------------------------------------------------------------------
+    // Evaluation
+    // -----------------------------------------------------------------------
+
+    /** The outcome of evaluating one level. */
+    private enum Decision {
+        /** A matching role grants the capability. */
+        GRANTED,
+        /** The capability is configured at this level, but not granted. */
+        DENIED,
+        /** Nothing at this level speaks to the capability. */
+        UNCONFIGURED
+    }
+
+    /**
+     * Decides {@code capability} from the {@code mondrian.security.*}
+     * properties.
+     *
+     * <p>The server-wide capabilities are enforced as soon as any server-level
+     * role is declared at all: they are the operations that manage the server,
+     * so once an operator has said who administers it, everyone else is not an
+     * administrator. {@code schema} is different -- it also has a per-catalog
+     * level -- so it is enforced here only when some role actually declares
+     * it.</p>
+     */
+    private static Decision decideAtServerLevel(
+        Identity identity,
+        Capability capability)
+    {
+        final Map<String, ServerRole> roles = serverRoles();
+        if (roles.isEmpty()) {
+            return Decision.UNCONFIGURED;
+        }
+        if (capability.isCatalogScoped()) {
+            boolean declared = false;
+            for (ServerRole role : roles.values()) {
+                if (role.grants.containsKey(capability.getAttribute())) {
+                    declared = true;
+                    break;
+                }
+            }
+            if (!declared) {
+                return Decision.UNCONFIGURED;
+            }
+        }
+        for (ServerRole role : matchServerRoles(roles, identity)) {
+            if (capability.satisfiedBy(
+                    role.grants.get(capability.getAttribute())))
+            {
+                return Decision.GRANTED;
+            }
+        }
+        return Decision.DENIED;
+    }
+
+    /**
+     * Whether {@code identity} holds a server-wide {@code capability}: reading
+     * logs, editing the catalog registry, installing licenses.
+     */
+    public static boolean isGrantedAtServerLevel(
+        Identity identity,
+        Capability capability)
+    {
+        return decideAtServerLevel(identity, capability) != Decision.DENIED;
+    }
+
+    // -----------------------------------------------------------------------
+    // Role matching within a schema
     // -----------------------------------------------------------------------
 
     /**
@@ -340,42 +565,34 @@ public class ServerPermissions {
         return names;
     }
 
-    // -----------------------------------------------------------------------
-    // Evaluation
-    // -----------------------------------------------------------------------
-
-    /** The outcome of evaluating one schema. */
-    private enum Decision {
-        /** A matching role grants the capability. */
-        GRANTED,
-        /** The schema uses ServerGrant, but not in a way that grants this. */
-        DENIED,
-        /** The schema declares no ServerGrant at all; nothing to enforce. */
-        UNCONFIGURED
-    }
-
-    private static Decision decide(
+    /**
+     * Decides {@code capability} from one schema's own roles, i.e. from the
+     * {@code schemaAccess} attribute of {@code <Role>}. Only the catalog-scoped
+     * capabilities can be granted this way.
+     */
+    private static Decision decideAtCatalogLevel(
         MondrianDef.Schema xmlSchema,
         Identity identity,
         Capability capability)
     {
-        if (xmlSchema == null || xmlSchema.roles == null) {
+        if (!capability.isCatalogScoped()
+            || xmlSchema == null
+            || xmlSchema.roles == null)
+        {
             return Decision.UNCONFIGURED;
         }
-        boolean anyServerGrant = false;
+        boolean declared = false;
         for (MondrianDef.Role role : xmlSchema.roles) {
-            if (role.serverGrant != null) {
-                anyServerGrant = true;
+            if (role.schemaAccess != null) {
+                declared = true;
                 break;
             }
         }
-        if (!anyServerGrant) {
+        if (!declared) {
             return Decision.UNCONFIGURED;
         }
         for (MondrianDef.Role role : matchRoles(xmlSchema, identity)) {
-            if (role.serverGrant != null
-                && capability.satisfiedBy(role.serverGrant))
-            {
+            if (capability.satisfiedBy(role.schemaAccess)) {
                 return Decision.GRANTED;
             }
         }
@@ -383,16 +600,32 @@ public class ServerPermissions {
     }
 
     /**
-     * Whether {@code identity} holds {@code capability} according to a single
-     * schema. Used for the per-catalog capabilities (reading and writing that
-     * catalog's schema XML).
+     * Whether {@code identity} holds {@code capability} on the catalog described
+     * by {@code xmlSchema}.
+     *
+     * <p>The two levels compose the way roles already do: the most permissive
+     * answer wins, so a schema may grant access the server-level configuration
+     * does not, and vice versa. Access is left unenforced only when
+     * <em>neither</em> level configures the capability -- which means a
+     * server-level {@code schema} grant also decides catalogs whose own schema
+     * says nothing, including ones added later.</p>
      */
     public static boolean isGranted(
         MondrianDef.Schema xmlSchema,
         Identity identity,
         Capability capability)
     {
-        return decide(xmlSchema, identity, capability) != Decision.DENIED;
+        final Decision catalog =
+            decideAtCatalogLevel(xmlSchema, identity, capability);
+        if (catalog == Decision.GRANTED) {
+            return true;
+        }
+        final Decision server = decideAtServerLevel(identity, capability);
+        if (server == Decision.GRANTED) {
+            return true;
+        }
+        return catalog == Decision.UNCONFIGURED
+            && server == Decision.UNCONFIGURED;
     }
 
     /** As {@link #isGranted(MondrianDef.Schema, Identity, Capability)}. */
@@ -401,91 +634,42 @@ public class ServerPermissions {
         Identity identity,
         Capability capability)
     {
-        return schema == null
-            || isGranted(schema.getXMLSchema(), identity, capability);
+        return isGranted(
+            schema == null ? null : schema.getXMLSchema(),
+            identity,
+            capability);
     }
 
     /**
-     * Whether {@code identity} holds {@code capability} according to any
-     * catalog known to {@code repository}. Used for the server-wide
-     * capabilities, which have no single schema to consult: the catalog
-     * registry, the log files and the license files all sit above any one
-     * catalog.
-     */
-    public static boolean isGrantedByAnyCatalog(
-        Repository repository,
-        RolapConnection connection,
-        Identity identity,
-        Capability capability)
-    {
-        if (repository == null) {
-            return true;
-        }
-        boolean anyConfigured = false;
-        try {
-            for (String databaseName
-                : repository.getDatabaseNames(connection))
-            {
-                for (String catalogName
-                    : repository.getCatalogNames(connection, databaseName))
-                {
-                    final Map<String, RolapSchema> schemas =
-                        repository.getRolapSchemas(
-                            connection, databaseName, catalogName);
-                    for (RolapSchema schema : schemas.values()) {
-                        switch (decide(
-                            schema.getXMLSchema(), identity, capability))
-                        {
-                        case GRANTED:
-                            return true;
-                        case DENIED:
-                            anyConfigured = true;
-                            break;
-                        default:
-                            break;
-                        }
-                    }
-                }
-            }
-        } catch (RuntimeException e) {
-            // A catalog that cannot be loaded cannot grant anything. Deciding
-            // on the catalogs that did load is the safe reading; failing open
-            // on a broken catalog would be a way around the check.
-            LOGGER.warn(
-                "ServerPermissions: could not enumerate every catalog while "
-                + "checking " + capability.describe(), e);
-        }
-        return !anyConfigured;
-    }
-
-    /**
-     * Whether {@code identity} holds {@code capability} according to any
-     * catalog listed in the web application's {@code /WEB-INF/datasources.xml}.
+     * Whether {@code identity} holds {@code capability} on the catalog named
+     * {@code catalogName} in the web application's
+     * {@code /WEB-INF/datasources.xml}.
      *
      * <p>This is the variant for endpoints that have no OLAP connection to work
-     * from — {@code /logs} and the license servlet. It reads the role
-     * declarations straight out of the schema files rather than loading the
-     * catalogs, so it answers the same way on a server that has not served a
-     * query yet as on a warm one.</p>
+     * from -- the MCP schema tools. It reads the role declarations straight out
+     * of the schema file rather than loading the catalog, so it answers the same
+     * way on a server that has not served a query yet as on a warm one.</p>
+     *
+     * <p>If the schema file cannot be read, the server-level configuration
+     * decides alone: an unreadable file must not silently grant what it might
+     * have denied, but neither should it lock an administrator out of the very
+     * tool they would use to repair it.</p>
      */
-    public static boolean isGrantedByAnyCatalog(
+    public static boolean isGrantedForCatalog(
         ServletContext context,
+        String catalogName,
         Identity identity,
         Capability capability)
     {
-        boolean anyConfigured = false;
-        for (MondrianDef.Schema xmlSchema : schemasOf(context)) {
-            switch (decide(xmlSchema, identity, capability)) {
-            case GRANTED:
-                return true;
-            case DENIED:
-                anyConfigured = true;
-                break;
-            default:
-                break;
-            }
+        final MondrianDef.Schema xmlSchema = schemaOfCatalog(context, catalogName);
+        if (xmlSchema == null) {
+            LOGGER.warn(
+                "ServerPermissions: no readable schema for catalog '"
+                + catalogName + "'; deciding " + capability.describe()
+                + " from the server-level configuration alone.");
+            return isGrantedAtServerLevel(identity, capability);
         }
-        return !anyConfigured;
+        return isGranted(xmlSchema, identity, capability);
     }
 
     // -----------------------------------------------------------------------
@@ -509,22 +693,23 @@ public class ServerPermissions {
     }
 
     /**
-     * Parses every schema file named by {@code /WEB-INF/datasources.xml}. Only
-     * the role declarations are of interest, so the files are parsed as XML
-     * rather than loaded as catalogs: no SQL connection is opened and no
-     * validation is performed, which keeps this usable from a servlet that has
-     * no OLAP connection of its own.
+     * Parses the schema file that {@code /WEB-INF/datasources.xml} names for
+     * {@code catalogName}. Only the role declarations are of interest, so the
+     * file is parsed as XML rather than loaded as a catalog: no SQL connection
+     * is opened and no validation is performed, which keeps this usable from a
+     * servlet that has no OLAP connection of its own.
      */
-    private static List<MondrianDef.Schema> schemasOf(ServletContext context) {
-        final List<MondrianDef.Schema> schemas =
-            new ArrayList<MondrianDef.Schema>();
-        if (context == null) {
-            return schemas;
+    private static MondrianDef.Schema schemaOfCatalog(
+        ServletContext context,
+        String catalogName)
+    {
+        if (context == null || catalogName == null) {
+            return null;
         }
         final DataSourcesConfig.DataSources dataSources =
             dataSourcesOf(context);
         if (dataSources == null || dataSources.dataSources == null) {
-            return schemas;
+            return null;
         }
         for (DataSourcesConfig.DataSource dataSource
             : dataSources.dataSources)
@@ -537,14 +722,12 @@ public class ServerPermissions {
             for (DataSourcesConfig.Catalog catalog
                 : dataSource.catalogs.catalogs)
             {
-                final MondrianDef.Schema schema =
-                    schemaOf(context, catalog.definition);
-                if (schema != null) {
-                    schemas.add(schema);
+                if (catalogName.equals(catalog.name)) {
+                    return schemaOf(context, catalog.definition);
                 }
             }
         }
-        return schemas;
+        return null;
     }
 
     private static DataSourcesConfig.DataSources dataSourcesOf(
@@ -629,20 +812,48 @@ public class ServerPermissions {
 
     /**
      * The message to report when a capability is missing. Names the capability
-     * in the form it is declared in the schema, so that whoever sees it knows
-     * what to grant.
+     * in the form it is declared in, so that whoever sees it knows what to
+     * grant -- and, for the catalog-scoped one, both places it can be granted.
      */
     public static String denialMessage(Identity identity, Capability capability) {
         final String who = identity == null || identity.getUser() == null
             ? "The anonymous user"
             : "User '" + identity.getUser() + "'";
-        return who
-            + " is not granted "
-            + capability.describe()
-            + " by any role. Add a <ServerGrant "
-            + capability.describe()
-            + "/> to a <Role> the user is a member of, or to the schema's "
-            + "defaultRole.";
+        final StringBuilder buf = new StringBuilder();
+        buf.append(who)
+            .append(" is not granted ")
+            .append(capability.describe())
+            .append(" by any role. ");
+        if (capability.isCatalogScoped()) {
+            buf.append("Add schemaAccess=\"")
+                .append(capability.getRequiredValue())
+                .append("\" to a <Role> the user is a member of, or to the")
+                .append(" schema's defaultRole; or grant it for every catalog")
+                .append(" with ")
+                .append(ROLE_PROPERTY_PREFIX)
+                .append("<role>.")
+                .append(capability.getAttribute())
+                .append("=")
+                .append(capability.getRequiredValue())
+                .append(" in mondrian.properties.");
+        } else {
+            buf.append("This is a server-wide capability: set ")
+                .append(ROLE_PROPERTY_PREFIX)
+                .append("<role>.")
+                .append(capability.getAttribute())
+                .append("=")
+                .append(capability.getRequiredValue())
+                .append(" in mondrian.properties, and list the user or one of")
+                .append(" their groups in ")
+                .append(ROLE_PROPERTY_PREFIX)
+                .append("<role>.")
+                .append(MEMBERS_SUFFIX)
+                .append(" (or name that role in ")
+                .append(DEFAULT_ROLE_PROPERTY)
+                .append("). It cannot be granted in a schema file, which is")
+                .append(" itself editable through the server.");
+        }
+        return buf.toString();
     }
 }
 

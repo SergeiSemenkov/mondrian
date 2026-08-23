@@ -32,8 +32,7 @@ public class LogResource extends HttpServlet {
 
         final ServerPermissions.Identity identity =
                 ServerPermissions.identity(request);
-        if (!ServerPermissions.isGrantedByAnyCatalog(
-                getServletContext(),
+        if (!ServerPermissions.isGrantedAtServerLevel(
                 identity,
                 ServerPermissions.Capability.LOGS_READ))
         {
