@@ -26,24 +26,53 @@ import org.olap4j.Scenario;
 public class Session
 {
     private static final Logger LOGGER = LogManager.getLogger(Session.class);
-    final static Map<String, Session> sessions = new HashMap<String, Session>();
+
+    // Concurrent, because the reaper below walks this map on the timer thread
+    // while request threads are adding and removing sessions.
+    final static Map<String, Session> sessions =
+            new java.util.concurrent.ConcurrentHashMap<String, Session>();
 
     static java.util.Timer timer = new Timer(true);
     static java.util.TimerTask timerTask = new java.util.TimerTask() {
         public void run() {
+            // An exception thrown out of run() kills the timer thread for the
+            // life of the JVM -- silently, since Timer has nowhere to report it
+            // -- and idle sessions are then never reaped again. Nothing in here
+            // is worth that, so everything is caught and logged.
+            try {
+                sweep();
+            } catch (Throwable t) {
+                LOGGER.error("Session reaper failed; sessions may not be reaped", t);
+            }
+        }
+
+        private void sweep() {
+            final long timeoutSeconds =
+                    mondrian.olap.MondrianProperties.instance().IdleOrphanSessionTimeout.get();
+            final java.time.LocalDateTime now = java.time.LocalDateTime.now();
             List<String> toRemove = new ArrayList<String>();
             for(Map.Entry<String, Session> entry : sessions.entrySet()) {
                 Session session = entry.getValue();
-                java.time.Duration duration = java.time.Duration.between(
-                        session.checkInTime,
-                        java.time.LocalDateTime.now());
-                if(duration.getSeconds() >
-                        mondrian.olap.MondrianProperties.instance().IdleOrphanSessionTimeout.get()) {
+                java.time.LocalDateTime checkInTime = session.checkInTime;
+                if(checkInTime == null) {
+                    // Cannot happen now that the constructor sets it, but a
+                    // null here used to kill the timer thread outright.
+                    continue;
+                }
+                java.time.Duration duration =
+                        java.time.Duration.between(checkInTime, now);
+                if(duration.getSeconds() > timeoutSeconds) {
                     toRemove.add(entry.getKey());
                 }
             }
             for(String sessionId : toRemove) {
-                closeInternal(sessionId);
+                try {
+                    closeInternal(sessionId);
+                } catch (Throwable t) {
+                    // One session that will not close must not strand the rest.
+                    LOGGER.error(
+                            "Could not close idle session \"" + sessionId + "\"", t);
+                }
             }
         }
     };
@@ -56,10 +85,30 @@ public class Session
     Session(String sessionId)
     {
         this.sessionId = sessionId;
+        // Set here rather than after the map insert below: the reaper reads
+        // this field as soon as the session is reachable, and used to find it
+        // null in that window.
+        this.checkInTime = java.time.LocalDateTime.now();
     }
     public static Session create(String sessionId) throws OlapException
     {
-        if(sessions.containsKey(sessionId)) {
+        // The map is concurrent and so rejects a null key outright; sessions
+        // are identified by id, and one with no id is not a session.
+        if(sessionId == null) {
+            throw new mondrian.xmla.XmlaException(
+                    "XMLAnalysisError",
+                    "0xc10c000a",
+                    "Session id must not be null.",
+                    new OlapException("Session id must not be null.")
+            );
+        }
+
+        Session session = new Session(sessionId);
+
+        // putIfAbsent rather than containsKey-then-put: two requests naming the
+        // same session id would otherwise both pass the check and one would
+        // silently replace the other's session.
+        if(sessions.putIfAbsent(sessionId, session) != null) {
             throw new mondrian.xmla.XmlaException(
                     "XMLAnalysisError",
                     "0xc10c000a",
@@ -68,11 +117,6 @@ public class Session
             );
         }
 
-        Session session = new Session(sessionId);
-
-        sessions.put(sessionId, session);
-        session.checkInTime = java.time.LocalDateTime.now();
-
         mondrian.metrics.SessionMetrics.setSessionCount(sessions.size());
 
         return session;
@@ -80,12 +124,21 @@ public class Session
 
     public static Session getWithoutCheck(String sessionId)
     {
+        // A connection made without a sessionId asks with null, and must get
+        // null back. ConcurrentHashMap.get(null) throws where HashMap.get(null)
+        // did not, so the guard is load-bearing, not defensive.
+        if(sessionId == null) {
+            return null;
+        }
         return sessions.get(sessionId);
     }
 
     public static Session get(String sessionId) throws OlapException
     {
-        if(!sessions.containsKey(sessionId)) {
+        // One lookup, not containsKey-then-get: the reaper can remove the
+        // session between the two, and this method must not return null.
+        Session session = getWithoutCheck(sessionId);
+        if(session == null) {
             throw new mondrian.xmla.XmlaException(
                     "XMLAnalysisError",
                     "0xc10c000a",
@@ -93,10 +146,11 @@ public class Session
                     new SessionNotFoundException("Session with id \"" + sessionId + "\" does not exist")
             );
         }
-        return sessions.get(sessionId);
+        return session;
     }
 
-    java.time.LocalDateTime checkInTime = null;
+    // Written by request threads, read by the timer thread.
+    volatile java.time.LocalDateTime checkInTime = null;
 
     public static void checkIn(String sessionId) throws OlapException
     {
@@ -106,6 +160,10 @@ public class Session
 
     static void closeInternal(String sessionId)
     {
+        if(sessionId == null) {
+            return;
+        }
+
         List<RolapSchema> rolapSchemas = RolapSchemaPool.instance().getRolapSchemas();
         for(RolapSchema rolapSchema: rolapSchemas) {
             final String rolapSchemaSessionId = rolapSchema.getInternalConnection().getConnectInfo().get("sessionId");
@@ -128,7 +186,7 @@ public class Session
     }
 
     static void shutdownCacheManager(Session session) {
-        if(session.segmentCacheManager != null) {
+        if(session != null && session.segmentCacheManager != null) {
             // Send a shutdown command and wait for it to return.
             session.segmentCacheManager.shutdown();
             // Now we can cleanup.
