@@ -459,7 +459,17 @@ public abstract class RolapAggregationManager {
         final CellRequest request)
     {
         RolapCubeLevel level;
-        if (member instanceof RolapCubeLevel) {
+        if (member instanceof RolapDrillThroughAttributeColumn) {
+            // A column addressed directly by DimensionAttribute -- already
+            // resolved to a RolapStar.Column at schema-load time, so there is
+            // no level lookup to do here (this synthetic OlapElement has no
+            // underlying Level/Hierarchy of its own).
+            RolapStar.Column column =
+                ((RolapDrillThroughAttributeColumn) member).getColumn();
+            request.addConstrainedColumn(column, null);
+            ((DrillThroughCellRequest) request).addDrillThroughColumn(column);
+            return;
+        } else if (member instanceof RolapCubeLevel) {
             level = (RolapCubeLevel) member;
         } else if (member instanceof RolapCubeHierarchy
             || member instanceof RolapCubeDimension)

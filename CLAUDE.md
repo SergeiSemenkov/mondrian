@@ -118,6 +118,31 @@ Dialect and RDBMS-specific SQL generation quirks are one of the most-touched are
 fixing a query-generation bug, check whether it's dialect-specific (`spi.impl.*Dialect`) before changing shared
 `rolap.sql`/`rolap.agg` code.
 
+### Drillthrough columns: attribute-based vs. level-based
+
+`<Cube>` can declare a `<DrillThroughAction>` (`mondrian.olap.Mondrian.xml`, `RolapCube.addActions`) — a named,
+schema-configured list of columns returned by a DRILLTHROUGH request, built from `<DrillThroughAttribute>` /
+`<DrillThroughMeasure>` children. There are two ways to point a `<DrillThroughAttribute>` at a column, and they are
+not equivalent:
+
+- **`sourceAttribute="..."`** (current) — names a `DimensionAttribute` of `dimension="..."` directly and binds to
+  its `KeyColumn`, independent of any hierarchy/level. This is the only way to reference a property-only attribute
+  (`attributeHierarchyEnabled="false"`, e.g. FoodMart's `Store Manager`/`Store Type`/`Store Sqft`), which has no
+  `Level`/`Hierarchy` of its own at all. Resolved in `RolapCube.resolveDrillThroughAttributeColumn`, which builds a
+  `RolapStar.Column` via the new level-less `RolapStar.Table.makeColumnForAttributeExpr` and wraps it in
+  `RolapDrillThroughAttributeColumn` (a synthetic `OlapElement`, never exposed to MDX/XMLA, consumed only by
+  `RolapAggregationManager.addNonConstrainingColumns`'s dedicated branch). **Use this for every new/attribute-based
+  cube.**
+- **`dimension`/`hierarchy`/`level="..."`** (obsolete) — resolves a real `Level` object and reads its
+  `getBaseStarKeyColumn(...)`. Still fully supported — including transparently for a browsable attribute hierarchy's
+  auto-generated level, since that's just an ordinary `RolapLevel` (see the "why" doc below) — but kept only so
+  schemas written before `sourceAttribute` existed keep loading and behaving unchanged. Don't use it in new schema
+  examples.
+
+See `emondrian-modules/context/attribute_implementaion.md` (in the sibling `emondrian-modules` repo) for the
+broader `DimensionAttribute` model this builds on — why attributes generate levels the way they do, and the traps
+around binding a column to the dimension's own table instead of `Level.table`.
+
 ## Configuration
 
 Runtime behavior is controlled by `mondrian.properties` (Java properties file), whose keys are declared as fields in

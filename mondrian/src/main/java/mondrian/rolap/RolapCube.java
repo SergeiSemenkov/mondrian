@@ -25,6 +25,7 @@ import mondrian.rolap.format.FormatterFactory;
 import mondrian.server.Locus;
 import mondrian.server.Statement;
 import mondrian.spi.CellFormatter;
+import mondrian.spi.Dialect;
 
 import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
@@ -124,7 +125,38 @@ public class RolapCube extends CubeBase {
                 List<RolapDrillThroughColumn> columns = new ArrayList<RolapDrillThroughColumn>();
 
                 for(MondrianDef.DrillThroughColumn drillThroughColumn: drillThroughAction.columns) {
-                    if(drillThroughColumn instanceof MondrianDef.DrillThroughAttribute) {
+                    if(drillThroughColumn instanceof MondrianDef.DrillThroughAttribute
+                            && !Util.isEmpty(((MondrianDef.DrillThroughAttribute) drillThroughColumn).sourceAttribute)) {
+                        // A column addressed directly by DimensionAttribute, independent of
+                        // any hierarchy/level -- in particular usable for attributes declared
+                        // with attributeHierarchyEnabled="false", which have no Level/Hierarchy
+                        // of their own to reference via the classic branch below. Checked first
+                        // and handled entirely separately so that the classic branch (and every
+                        // schema that doesn't set sourceAttribute) is provably untouched.
+                        MondrianDef.DrillThroughAttribute drillThroughAttribute =
+                                (MondrianDef.DrillThroughAttribute)drillThroughColumn;
+
+                        Dimension dimension = null;
+                        for(Dimension currntDimension: this.getDimensions()) {
+                            if(currntDimension.getName().equals(drillThroughAttribute.dimension)) {
+                                dimension = currntDimension;
+                                break;
+                            }
+                        }
+                        if(dimension == null) {
+                            throw Util.newError(
+                                    "Error while creating DrillThrough  action. Dimension '"
+                                            + drillThroughAttribute.dimension + "' not found");
+                        }
+
+                        columns.add(
+                                resolveDrillThroughAttributeColumn(
+                                        drillThroughAttribute.name,
+                                        (RolapCubeDimension) dimension,
+                                        drillThroughAttribute.sourceAttribute)
+                        );
+                    }
+                    else if(drillThroughColumn instanceof MondrianDef.DrillThroughAttribute) {
                         MondrianDef.DrillThroughAttribute drillThroughAttribute =
                                 (MondrianDef.DrillThroughAttribute)drillThroughColumn;
 
@@ -223,6 +255,81 @@ public class RolapCube extends CubeBase {
                 this.actionList.add(rolapDrillThroughAction);
             }
         }
+    }
+
+    /**
+     * Resolves a drillthrough column addressed by DimensionAttribute name,
+     * independent of any hierarchy/level -- in particular for attributes
+     * declared with attributeHierarchyEnabled="false", which generate no
+     * hierarchy or level at all (see RolapDimension.createHierarchyFromAttribute)
+     * and so have no OlapElement of their own to reference.
+     *
+     * @param columnLabel Name of the drillthrough column (schema author's label)
+     * @param cubeDimension Dimension the attribute belongs to
+     * @param sourceAttributeName Name of the DimensionAttribute
+     * @return A drillthrough column wrapping a pre-resolved RolapStar.Column
+     */
+    private RolapDrillThroughAttributeColumn resolveDrillThroughAttributeColumn(
+            String columnLabel,
+            RolapCubeDimension cubeDimension,
+            String sourceAttributeName)
+    {
+        // RolapCubeDimension.findSourceAttribute would return null here --
+        // its own xmlAttributes field is never populated (it's built via the
+        // RolapDimension super-constructor overload that skips xmlDimension,
+        // see RolapCubeDimension's constructor). The populated attribute list
+        // lives on the wrapped RolapDimension instead.
+        MondrianDef.DimensionAttribute xmlAttribute =
+                cubeDimension.rolapDimension.findSourceAttribute(sourceAttributeName);
+        if (xmlAttribute == null) {
+            throw Util.newError(
+                    "Error while creating DrillThrough  action. Attribute '"
+                            + sourceAttributeName + "' not found on dimension '"
+                            + cubeDimension.getName() + "'");
+        }
+
+        Hierarchy[] hierarchies = cubeDimension.getHierarchies();
+        if (hierarchies.length == 0) {
+            throw Util.newError(
+                    "Error while creating DrillThrough  action. Dimension '"
+                            + cubeDimension.getName()
+                            + "' has no hierarchies to resolve a table alias for attribute '"
+                            + sourceAttributeName + "'");
+        }
+        // Any hierarchy of a table=-declared Dimension resolves to the same
+        // table alias (a shared dimension's table propagates to every usage,
+        // and the alias is a function of the dimension, not of which
+        // <Hierarchy> is asking) -- so hierarchies[0] is safe here, exactly
+        // as RolapLevel.createFromXml's sourceAttribute path relies on the
+        // same fact scoped to a single hierarchy.
+        RolapCubeHierarchy cubeHierarchy = (RolapCubeHierarchy) hierarchies[0];
+        RolapHierarchy plainHierarchy = cubeHierarchy.getRolapHierarchy();
+
+        // Bind to the dimension's own table, not to any Level's table -- an
+        // attribute-based level never sets one (see RolapLevel.createFromXml's
+        // sourceAttribute handling, which uses the identical pattern).
+        String dimensionTable =
+                ((MondrianDef.Relation) plainHierarchy.getRelation()).getAlias();
+
+        RolapStar.Table table = getStar().getFactTable().findDescendant(dimensionTable);
+        if (table == null) {
+            throw Util.newError(
+                    "Error while creating DrillThrough  action. Table '"
+                            + dimensionTable + "' for dimension '"
+                            + cubeDimension.getName()
+                            + "' was not found in the star for cube '" + getName() + "'");
+        }
+
+        MondrianDef.Column xmlColumn = new MondrianDef.Column();
+        xmlColumn.table = dimensionTable;
+        xmlColumn.name = xmlAttribute.keyColumn.columnName;
+        Dialect.Datatype datatype = Dialect.Datatype.valueOf(xmlAttribute.keyColumn.dataType);
+
+        RolapStar.Column column =
+                table.makeColumnForAttributeExpr(columnLabel, xmlColumn, datatype);
+
+        return new RolapDrillThroughAttributeColumn(
+                columnLabel, cubeDimension, cubeHierarchy, column);
     }
 
     /**

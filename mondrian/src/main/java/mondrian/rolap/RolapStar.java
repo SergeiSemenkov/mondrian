@@ -1607,6 +1607,78 @@ public class RolapStar {
         }
 
         /**
+         * Gets or creates a column for an arbitrary MondrianDef.Column
+         * expression, independent of any RolapLevel. Used to bind a
+         * DimensionAttribute's column directly (e.g. an attribute-addressed
+         * drillthrough column), where {@link #makeColumnForLevelExpr} cannot
+         * be used because there is no level to supply a unique name or an
+         * approximate row count -- an attribute with
+         * attributeHierarchyEnabled="false" has no level or hierarchy at
+         * all.
+         *
+         * <p>Mirrors makeColumnForLevelExpr's MondrianDef.Column branch
+         * exactly (same alias rebinding, same lookup-or-create via
+         * lookupColumnByExpression); does not support a name column or
+         * parent column, since a bare attribute reference has neither. Kept
+         * as a separate method rather than folded into
+         * makeColumnForLevelExpr, so that method's behavior for every
+         * existing (level-driven) caller is untouched.
+         *
+         * <p>Invariant: this must always be called on the Table whose alias
+         * equals {@code xmlColumn.table} (callers resolve that table via
+         * {@link Table#findDescendant} first) -- so {@code findAncestor}
+         * below always resolves to {@code this} on its first check, and the
+         * lookup/creation stays scoped to the right table even though (as in
+         * {@link #makeColumnForLevelExpr}) it runs unqualified on {@code
+         * this} rather than on the resolved table.
+         *
+         * @param name Name of the drillthrough/attribute column
+         * @param xmlColumn Column expression, already bound to a table alias
+         * @param datatype Column datatype
+         * @return The RolapStar.Column for this expression, reusing an
+         *     existing one if already registered
+         */
+        Column makeColumnForAttributeExpr(
+            String name,
+            MondrianDef.Column xmlColumn,
+            Dialect.Datatype datatype)
+        {
+            String tableName = xmlColumn.table;
+            Table table = findAncestor(tableName);
+            if (table == null) {
+                throw Util.newError(
+                    "Attribute column '" + name
+                    + "' is invalid: table '" + tableName
+                    + "' is not found in current scope"
+                    + Util.nl
+                    + ", star:"
+                    + Util.nl
+                    + getStar());
+            }
+            RolapStar.AliasReplacer aliasReplacer =
+                new RolapStar.AliasReplacer(tableName, table.getAlias());
+            MondrianDef.Expression expr = aliasReplacer.visit(xmlColumn);
+
+            Column c = lookupColumnByExpression(expr);
+            if (c != null) {
+                return c;
+            }
+            Column column = new RolapStar.Column(
+                name,
+                table,
+                expr,
+                datatype,
+                null,
+                null,
+                null,
+                null,
+                Integer.MIN_VALUE,
+                star.nextColumnCount());
+            addColumn(column);
+            return column;
+        }
+
+        /**
          * Extends this 'leg' of the star by adding <code>relation</code>
          * joined by <code>joinCondition</code>. If the same expression is
          * already present, does not create it again. Stores the unaliased

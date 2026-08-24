@@ -2590,11 +2590,22 @@ Revision is $Id$
         <Attribute name="dimension" required="true">
             <Doc></Doc>
         </Attribute>
-        <Attribute name="hierarchy" required="true">
+        <Attribute name="hierarchy" required="false">
             <Doc></Doc>
         </Attribute>
-        <Attribute name="level" required="true">
+        <Attribute name="level" required="false">
             <Doc></Doc>
+        </Attribute>
+        <Attribute name="sourceAttribute" required="false">
+            <Doc>
+                Name of a DimensionAttribute of the named dimension. When set,
+                the column is bound directly to that attribute's KeyColumn,
+                independent of any hierarchy or level -- including attributes
+                declared with attributeHierarchyEnabled="false", which have
+                no Level/Hierarchy of their own to reference. Mutually
+                exclusive with hierarchy/level; if set, hierarchy and level
+                are ignored.
+            </Doc>
         </Attribute>
     </Element>
 
