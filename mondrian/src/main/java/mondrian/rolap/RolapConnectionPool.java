@@ -12,6 +12,7 @@
 
 package mondrian.rolap;
 
+import mondrian.olap.MondrianProperties;
 import mondrian.olap.Util;
 
 import org.apache.commons.dbcp.*;
@@ -182,13 +183,14 @@ class RolapConnectionPool {
     {
         ObjectPool connectionPool = mapConnectKeyToPool.get(key);
         if (connectionPool == null) {
+            final MondrianProperties properties = MondrianProperties.instance();
             // use GenericObjectPool, which provides for resource limits
             connectionPool = new GenericObjectPool(
                 null, // PoolableObjectFactory, can be null
-                50, // max active
+                properties.ConnectionPoolMaxActive.get(), // max active
                 GenericObjectPool.WHEN_EXHAUSTED_BLOCK, // action when exhausted
-                3000, // max wait (milli seconds)
-                10, // max idle
+                properties.ConnectionPoolMaxWaitMillis.get(), // max wait (ms)
+                properties.ConnectionPoolMaxIdle.get(), // max idle
                 false, // test on borrow
                 false, // test on return
                 60000, // time between eviction runs (millis)

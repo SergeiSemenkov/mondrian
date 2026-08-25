@@ -8,7 +8,7 @@
     <version>9.3.0.0-SNAPSHOT</version>
   </parent>
   <artifactId>mondrian</artifactId>
-  <version>9.3.0-emondrian.31</version>
+  <version>9.3.0-emondrian.32</version>
   <name>Pentaho Community Edition Project: ${project.artifactId}</name>
   <description>Mondrian OLAP Engine</description>
   <url>http://mondrian.pentaho.com</url>

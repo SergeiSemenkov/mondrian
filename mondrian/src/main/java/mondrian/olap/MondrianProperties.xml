@@ -38,6 +38,55 @@ on the class path.
         <Type>String</Type>
         <Default>sun.jdbc.odbc.JdbcOdbcDriver,org.hsqldb.jdbcDriver,oracle.jdbc.OracleDriver,com.mysql.jdbc.Driver</Default>
     </PropertyDefinition>
+    <PropertyDefinition>
+        <Name>ConnectionPoolMaxActive</Name>
+        <Path>mondrian.rolap.connectionPool.maxActive</Path>
+        <Category>Connections</Category>
+        <Description>
+<p>Maximum number of active JDBC connections
+{@link mondrian.rolap.RolapConnectionPool} will hand out at once, per
+distinct connect specification. Once this many connections are checked out
+simultaneously, a further request blocks for
+{@link #ConnectionPoolMaxWaitMillis} before failing with a pool-exhausted
+error - so this is a hard ceiling on how many queries can be running against
+one database at the same time, not just a soft tuning knob.</p>
+
+<p>The historical default (50) predates this property (it was previously
+hardcoded and not configurable at all); raise it for a deployment that
+expects more concurrent long-running queries than that against a single
+connect string, and make sure the target database can actually sustain that
+many concurrent connections before raising it.</p>
+        </Description>
+        <Type>int</Type>
+        <Default>50</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
+        <Name>ConnectionPoolMaxIdle</Name>
+        <Path>mondrian.rolap.connectionPool.maxIdle</Path>
+        <Category>Connections</Category>
+        <Description>
+Maximum number of idle (checked-in, unused) JDBC connections
+{@link mondrian.rolap.RolapConnectionPool} keeps open per distinct connect
+specification, ready to be handed out without reconnecting. Idle connections
+beyond this number are closed rather than kept. The historical default (10)
+predates this property.
+        </Description>
+        <Type>int</Type>
+        <Default>10</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
+        <Name>ConnectionPoolMaxWaitMillis</Name>
+        <Path>mondrian.rolap.connectionPool.maxWaitMillis</Path>
+        <Category>Connections</Category>
+        <Description>
+Milliseconds a request will block waiting for a JDBC connection to become
+available once {@link #ConnectionPoolMaxActive} is already checked out,
+before failing with a pool-exhausted error. The historical default (3000)
+predates this property.
+        </Description>
+        <Type>int</Type>
+        <Default>3000</Default>
+    </PropertyDefinition>
 	<PropertyDefinition>
         <Name>CellBatchSize</Name>
         <Path>mondrian.rolap.cellBatchSize</Path>
