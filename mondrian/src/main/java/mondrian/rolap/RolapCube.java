@@ -311,13 +311,23 @@ public class RolapCube extends CubeBase {
         String dimensionTable =
                 ((MondrianDef.Relation) plainHierarchy.getRelation()).getAlias();
 
-        RolapStar.Table table = getStar().getFactTable().findDescendant(dimensionTable);
+        // this.getStar() is null for a virtual cube (it has no fact table of
+        // its own) -- resolve via the specific base cube the hierarchy's
+        // VirtualCubeDimension named instead, exactly as ordinary MDX access
+        // to the same hierarchy already does (RolapCubeHierarchy.factCubeForStar).
+        RolapCube starCube = cubeHierarchy.getFactCubeForStar();
+        if (starCube == null || starCube.getStar() == null) {
+            throw Util.newError(
+                    "Error while creating DrillThrough  action. No RolapStar available for dimension '"
+                            + cubeDimension.getName() + "' in cube '" + getName() + "'");
+        }
+        RolapStar.Table table = starCube.getStar().getFactTable().findDescendant(dimensionTable);
         if (table == null) {
             throw Util.newError(
                     "Error while creating DrillThrough  action. Table '"
                             + dimensionTable + "' for dimension '"
                             + cubeDimension.getName()
-                            + "' was not found in the star for cube '" + getName() + "'");
+                            + "' was not found in the star for cube '" + starCube.getName() + "'");
         }
 
         MondrianDef.Column xmlColumn = new MondrianDef.Column();

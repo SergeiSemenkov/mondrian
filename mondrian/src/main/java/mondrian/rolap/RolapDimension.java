@@ -149,6 +149,25 @@ class RolapDimension extends DimensionBase {
             xmlCubeDimension.table = xmlDimension.table;
         }
 
+        // A shared dimension's own explicit primaryKey= needs the identical
+        // inheritance as table= above, for the identical reason: a usage
+        // (DimensionUsage/VirtualCubeDimension) normally states only
+        // foreignKey=, relying on the shared <Dimension>'s primaryKey=.
+        // Without this, RolapHierarchy's own primaryKey propagation (below,
+        // and see RolapHierarchy's "CubeDimension has a primaryKey" check)
+        // never fires per usage, and HierarchyUsage.init falls back to
+        // joining on "the key of the last level" -- i.e. whatever column the
+        // attribute happens to key that particular hierarchy on, silently
+        // wrong for every hierarchy but the one whose own level column
+        // happens to coincide with the real join column.
+        if (xmlCubeDimension != null
+            && xmlCubeDimension != xmlDimension
+            && Util.isEmpty(xmlCubeDimension.primaryKey)
+            && !Util.isEmpty(xmlDimension.primaryKey))
+        {
+            xmlCubeDimension.primaryKey = xmlDimension.primaryKey;
+        }
+
         // Store the XML attributes
         this.xmlAttributes = xmlDimension.Attributes;
 

@@ -412,7 +412,14 @@ public class RolapLevel extends LevelBase {
                 captionExp = null;
             }
 
-            name = sourceAttr.name;
+            // The level's own name= is required (Mondrian.xml) and describes
+            // its place in the hierarchy (D5) -- the attribute supplies the
+            // column/caption/order, not the identity of the level itself.
+            // Using sourceAttr.name here instead silently renamed every level
+            // whose <Level name="..."> differed from its sourceAttribute=,
+            // which broke both MDX unique-name addressing and classic-form
+            // DrillThroughAttribute level lookup (RolapCube.addActions).
+            name = xmlLevel.name;
             description = sourceAttr.description;
             if (sourceAttr.orderByColumn != null) {
                 column = new MondrianDef.Column();

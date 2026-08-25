@@ -57,6 +57,14 @@ public class RolapCubeHierarchy extends RolapHierarchy {
     // redundant copy of {@link #levels} with tigher type
     private final RolapCubeLevel[] cubeLevels;
 
+    // The cube whose RolapStar this hierarchy's columns actually live in --
+    // for a virtual cube dimension this is the specific base cube named by
+    // <VirtualCubeDimension cubeName="...">, not the virtual cube itself
+    // (which has no RolapStar of its own). Resolved once here so drillthrough
+    // sourceAttribute resolution (RolapCube.resolveDrillThroughAttributeColumn)
+    // has a star to bind to instead of calling getStar() on a virtual cube.
+    private final RolapCube factCubeForStar;
+
     /**
      * Creates a RolapCubeHierarchy.
      *
@@ -128,6 +136,7 @@ public class RolapCubeHierarchy extends RolapHierarchy {
         if (factCube == null) {
           factCube = cubeDimension.getCube();
         }
+        this.factCubeForStar = factCube;
 
         usingCubeFact =
             (factCube == null
@@ -244,6 +253,15 @@ public class RolapCubeHierarchy extends RolapHierarchy {
     @Override
     public RolapCubeLevel[] getLevels() {
         return cubeLevels;
+    }
+
+    /**
+     * The cube whose RolapStar actually holds this hierarchy's columns --
+     * the owning cube itself, except for a virtual cube dimension, where
+     * it's the specific base cube named by cubeName=.
+     */
+    public RolapCube getFactCubeForStar() {
+        return factCubeForStar;
     }
 
     public String getAllMemberName() {
