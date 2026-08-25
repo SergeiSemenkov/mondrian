@@ -771,6 +771,22 @@ If enabled some NON EMPTY CrossJoin will be computed in SQL.
         <Default>true</Default>
     </PropertyDefinition>
     <PropertyDefinition>
+        <Name>EnableNativeCrossJoinExpansion</Name>
+        <Path>mondrian.native.crossjoin.expansion.enable</Path>
+        <Category>SQL generation</Category>
+        <Description>
+If enabled, a NON EMPTY CrossJoin operand that RolapNativeCrossJoin cannot recognize directly
+(e.g. one built from Hierarchize/AddCalculatedMembers/DrilldownLevel/DrilldownMember, as
+PivotTable clients such as Excel generate for a drilled-open field) is evaluated once, split by
+level, and combined with the other operands' own recognized states into a bounded number of
+native crossjoin variants, unioned together - rather than falling all the way back to fully
+interpreted evaluation for the whole expression. Has no effect unless EnableNativeCrossJoin is
+also enabled. See RolapNativeCrossJoin#tryMultiVariantCrossJoin.
+        </Description>
+        <Type>boolean</Type>
+        <Default>true</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
         <Name>EnableNativeTopCount</Name>
         <Path>mondrian.native.topcount.enable</Path>
         <Category>SQL generation</Category>
