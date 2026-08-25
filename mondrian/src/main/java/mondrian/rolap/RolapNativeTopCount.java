@@ -94,6 +94,11 @@ public class RolapNativeTopCount extends RolapNativeSet {
             AggStar aggStar)
         {
             assert isValid();
+            if (isJoinRequired()) {
+                super.addConstraint(sqlQuery, baseCube, aggStar);
+            } else if (args.length == 1) {
+                args[0].addConstraint(sqlQuery, baseCube, null);
+            }
             if (orderByExpr != null) {
                 RolapNativeSql sql =
                     new RolapNativeSql(
@@ -102,8 +107,32 @@ public class RolapNativeTopCount extends RolapNativeSet {
                     sql.generateTopCountOrderBy(orderByExpr);
                 boolean nullable =
                     deduceNullability(orderByExpr);
-                final String orderByAlias =
-                    sqlQuery.addSelect(orderBySql, null);
+                // SqlTupleReader.generateSelectForLevels() always calls the whole of this
+                // addConstraint() *before* it adds the crossjoin args' own select columns (the
+                // level's key/name/caption) whenever isJoinRequired() is true - see its own
+                // "Add constraints at first to ensure that level tables are added last" comment
+                // and the prependConstraint logic around it (mondrian/rolap/SqlTupleReader.java).
+                // That means anything this method adds to the select list here lands *before*
+                // the level's own columns, and SqlTupleReader.Target.internalAddRow() always
+                // starts reading a result row from column 0 assuming it belongs to the level
+                // being fetched - so an order-by column added here corrupts every member built
+                // from this query: its key/caption comes back as the order-by's own value
+                // instead. Confirmed with a plain hand-written "TopCount(<Level>.Members, n,
+                // [Measures].[X])" query - not specific to any one schema or to DAX. See
+                // context/dax.md "Native SQL evaluation" / Gap 2 for how this was found (via
+                // DAX's TOPN, which this fix was written to unblock).
+                //
+                // addSelect() is only needed here to hand addOrderBy() a column alias for
+                // dialects that require ordering by alias rather than by the raw expression
+                // (Dialect.requiresOrderByAlias()) - skip it otherwise, which avoids the corrupt
+                // column entirely for every dialect that doesn't need it (both of this project's
+                // live dialects, HSQLDB and ClickHouse, order by the raw aggregate expression
+                // directly and don't). A dialect that does require the alias keeps the
+                // pre-existing bug; fixing that needs a different approach - reserving the
+                // extra column's position with SqlTupleReader itself - and is out of scope here.
+                final String orderByAlias = sqlQuery.getDialect().requiresOrderByAlias()
+                        ? sqlQuery.addSelect(orderBySql, null)
+                        : null;
                 sqlQuery.addOrderBy(
                     orderBySql,
                     orderByAlias,
@@ -111,11 +140,6 @@ public class RolapNativeTopCount extends RolapNativeSet {
                     true,
                     nullable,
                     true);
-            }
-            if (isJoinRequired()) {
-                super.addConstraint(sqlQuery, baseCube, aggStar);
-            } else if (args.length == 1) {
-                args[0].addConstraint(sqlQuery, baseCube, null);
             }
         }
 
