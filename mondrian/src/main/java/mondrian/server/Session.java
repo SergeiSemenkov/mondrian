@@ -177,6 +177,19 @@ public class Session
 
         for(MondrianServerImpl mondrianServerImpl: mondrian.server.MondrianServerImpl.getServers()) {
             for(Statement statement: mondrianServerImpl.getStatements(sessionId)) {
+                // cancel() before removeStatement(): removeStatement only drops the
+                // bookkeeping entry, it does not stop a query. Without an explicit
+                // cancel, a query still executing on another thread for this session
+                // would keep running to completion -- against the DB, against cache --
+                // orphaned from any session once the map entry is gone.
+                try {
+                    statement.cancel();
+                } catch (Throwable t) {
+                    // One statement that will not cancel must not strand the rest.
+                    LOGGER.error(
+                            "Could not cancel statement " + statement.getId()
+                                    + " for closing session \"" + sessionId + "\"", t);
+                }
                 mondrianServerImpl.removeStatement(statement);
             }
         }
@@ -227,14 +240,6 @@ public class Session
 
     public Scenario getScenario() {
         return this.scenario;
-    }
-
-    public static void ResetAllCaches() {
-        for(Map.Entry<String, Session> entry : sessions.entrySet()) {
-            Session session = entry.getValue();
-            shutdownCacheManager(session);
-            session.segmentCacheManager = null;
-        }
     }
 
     public static class SessionNotFoundException extends Exception {

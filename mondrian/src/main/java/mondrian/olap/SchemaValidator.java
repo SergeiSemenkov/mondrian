@@ -108,6 +108,9 @@ public class SchemaValidator {
         "name", "column", "sourceAttribute", "type", "formatter", "caption",
         "description", "dependsOnLevelValue");
 
+    private static final Set<String> ATTRIBUTE_MAPPING_ATTRS = Set.of(
+        "attribute", "factColumn");
+
     private static final Set<String> VIRTUAL_CUBE_DIMENSION_ATTRS = Set.of(
         "name", "cubeName", "caption", "description", "visible", "usagePrefix",
         "foreignKey", "highCardinality", "table", "primaryKey", "source", "level");
@@ -141,8 +144,53 @@ public class SchemaValidator {
         Element root = document.getDocumentElement();
         collectDimensions(root, findings);
         collectVirtualCubes(root, findings);
+        collectDimensionUsageAttributeMappings(root, findings);
         collectRoles(root, findings);
         return findings;
+    }
+
+    /**
+     * Validates {@code <AttributeMapping>}s on every {@code <DimensionUsage>}
+     * in the schema. Unlike a private {@code <Dimension>} (handled by
+     * {@link #validateDimension}), a {@code <DimensionUsage>} carries no
+     * {@code <DimensionAttribute>}s of its own -- its mappings' {@code
+     * attribute} names must resolve against the shared dimension it points
+     * at via {@code source}, so this runs as its own schema-wide pass rather
+     * than folding into {@code validateDimension}.
+     */
+    private static void collectDimensionUsageAttributeMappings(
+        Element root, List<Finding> findings)
+    {
+        Map<String, Element> sharedDimensions = new LinkedHashMap<>();
+        for (Element dimension : childrenNamed(root, "Dimension")) {
+            sharedDimensions.put(attr(dimension, "name"), dimension);
+        }
+        for (Element cube : childrenNamed(root, "Cube")) {
+            String cubeName = attr(cube, "name");
+            for (Element usage : childrenNamed(cube, "DimensionUsage")) {
+                String usageName = attr(usage, "name");
+                String source = attr(usage, "source");
+                String where = "Cube '" + cubeName + "', DimensionUsage '"
+                    + usageName + "'";
+                if (childrenNamed(usage, "AttributeMapping").isEmpty()) {
+                    continue;
+                }
+                Element shared = sharedDimensions.get(source);
+                if (shared == null) {
+                    // The dangling-source case is already reported elsewhere
+                    // (dimensionOfCube's callers); nothing to resolve
+                    // attribute names against here.
+                    continue;
+                }
+                Map<String, Element> attributesByName = new LinkedHashMap<>();
+                for (Element attribute
+                    : childrenNamed(shared, "DimensionAttribute"))
+                {
+                    attributesByName.put(attr(attribute, "name"), attribute);
+                }
+                validateAttributeMappings(usage, where, attributesByName, findings);
+            }
+        }
     }
 
     /**
@@ -315,6 +363,56 @@ public class SchemaValidator {
 
         validateKeyAttribute(dimension, where, keyAttributes, findings);
         validateLevels(dimension, where, attributesByName, findings);
+        validateAttributeMappings(dimension, where, attributesByName, findings);
+    }
+
+    /**
+     * Validates every {@code <AttributeMapping>} declared directly on a
+     * {@code CubeDimension} (a private {@code <Dimension>} or a
+     * {@code <DimensionUsage>}) -- see {@code CubeDimension.attributeMappings}
+     * in {@code Mondrian.xml}. {@code attributesByName} must already be
+     * resolved against the dimension the mapping's {@code attribute} names an
+     * attribute of: for a private/shared {@code <Dimension>} that is its own
+     * attributes; for a {@code <DimensionUsage>}, the caller resolves
+     * {@code source} to the shared dimension's attributes first.
+     *
+     * <p>Like {@code AttributeMapping} elements are parsed positionally
+     * (Mondrian.xml declares the array on {@code CubeDimension}, ahead of
+     * {@code Dimension}'s own {@code Attributes}/{@code hierarchies}): every
+     * {@code <AttributeMapping>} must appear before any
+     * {@code <DimensionAttribute>} or {@code <Hierarchy>} child, with no
+     * wrapping element -- the same trap documented in
+     * {@code context/attribute_implementaion.md} F1/F14 for
+     * {@code <KeyColumn>}/{@code <NameColumn>} ordering and for
+     * {@code <DimensionAttribute>}/{@code <Hierarchy>} ordering.
+     */
+    private static void validateAttributeMappings(
+        Element cubeDimension,
+        String where,
+        Map<String, Element> attributesByName,
+        List<Finding> findings)
+    {
+        for (Element mapping : childrenNamed(cubeDimension, "AttributeMapping")) {
+            String mappingWhere = where + ", AttributeMapping";
+            checkUnknownAttributes(
+                mapping, ATTRIBUTE_MAPPING_ATTRS, mappingWhere, findings);
+
+            String attributeName = attr(mapping, "attribute");
+            if (attributeName.isEmpty()) {
+                findings.add(error(mappingWhere + " has no attribute."));
+            } else {
+                mappingWhere = where + ", AttributeMapping '" + attributeName + "'";
+                if (!attributesByName.containsKey(attributeName)) {
+                    findings.add(error(
+                        mappingWhere + " references attribute '" + attributeName
+                        + "', which this dimension does not define."));
+                }
+            }
+
+            if (attr(mapping, "factColumn").isEmpty()) {
+                findings.add(error(mappingWhere + " has no factColumn."));
+            }
+        }
     }
 
     private static void validateAttribute(

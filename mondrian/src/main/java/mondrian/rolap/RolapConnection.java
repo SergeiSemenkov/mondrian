@@ -705,12 +705,9 @@ public class RolapConnection extends ConnectionBase {
       // query has been punted
 
       if(e instanceof MemoryLimitExceededException) {
-        if(MondrianProperties.instance().ClearCachesOnOutOfMemory.get()) {
-          //server.getAggregationManager().ResetCacheManager();
-          CacheControl cacheControl = this.getCacheControl(null);
-          cacheControl.flushSchema(this.getSchema());
-          System.gc();
-        }
+        CacheControl cacheControl = this.getCacheControl(null);
+        cacheControl.flushSchema(this.getSchema());
+        System.gc();
       }
 
       throw e;

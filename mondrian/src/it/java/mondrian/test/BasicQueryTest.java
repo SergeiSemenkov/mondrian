@@ -3907,6 +3907,70 @@ public class BasicQueryTest extends FoodMartTestCase {
     executeAndCancel( query, 2000 );
   }
 
+  /**
+   * Verifies that closing a {@link mondrian.server.Session} (the XMLA-level session, not the
+   * connection) stops a query that is still executing under it -- not just that a session close
+   * removes the statement's bookkeeping entry, which by itself does nothing to the thread still
+   * running the query. Same shape as {@link #testCancel()} (a query that references
+   * {@link SleepUdf} so it is guaranteed to still be running when the cancel is issued), except
+   * the trigger here is {@link mondrian.server.Session#close(String)} instead of a direct
+   * {@code statement.cancel()} call.
+   */
+  public void testSessionCloseCancelsRunningQuery() throws Exception {
+    final TestContext tc =
+        TestContext.instance().create( null, null, null, null, "<UserDefinedFunction name=\"SleepUdf\" className=\""
+            + SleepUdf.class.getName() + "\"/>", null );
+
+    final String sessionId = "session-cancel-test-" + System.nanoTime();
+    final Util.PropertyList properties = tc.getConnectionProperties().clone();
+    properties.put( "sessionId", sessionId );
+    final Connection connection = tc.withProperties( properties ).getConnection();
+
+    mondrian.server.Session.create( sessionId );
+    try {
+      String query =
+          "WITH \n" + "  MEMBER [Measures].[Sleepy] \n" + "    AS 'SleepUdf([Measures].[Unit Sales])' \n"
+              + "SELECT {[Measures].[Sleepy]} ON COLUMNS,\n" + "  {[Product].members} ON ROWS\n" + "FROM [Sales]";
+      final Query mdxQuery = connection.parseQuery( query );
+
+      final Throwable[] closeError = { null };
+      Timer timer = new Timer( true );
+      timer.schedule( new TimerTask() {
+        public void run() {
+          Thread thread = Thread.currentThread();
+          thread.setName( "SessionCloseThread" );
+          try {
+            mondrian.server.Session.close( sessionId );
+          } catch ( Exception e ) {
+            closeError[0] = e;
+          }
+        }
+      }, 2000 );
+
+      long start = System.currentTimeMillis();
+      Throwable throwable = null;
+      try {
+        connection.execute( mdxQuery );
+      } catch ( Throwable ex ) {
+        throwable = ex;
+      }
+      long elapsedMillis = System.currentTimeMillis() - start;
+
+      if ( closeError[0] != null ) {
+        Assert.fail( "Session.close failed: " + closeError[0] );
+      }
+      // Confirms the query was actually stopped by the cancel, not that it happened to finish
+      // fast: [Product].members is 2000+ rows and SleepUdf sleeps 1ms per call on the "Sleepy"
+      // measure, so left alone this query runs several seconds past the 2-second cancel point.
+      TestContext.checkThrowable( throwable, "canceled" );
+      Assert.assertTrue(
+          "Query should have stopped soon after Session.close(), not run to completion; took "
+              + elapsedMillis + "ms", elapsedMillis < 8000 );
+    } finally {
+      connection.close();
+    }
+  }
+
   private void executeAndCancel( String queryString, int waitMillis ) {
     final TestContext tc =
         TestContext.instance().create( null, null, null, null, "<UserDefinedFunction name=\"SleepUdf\" className=\""

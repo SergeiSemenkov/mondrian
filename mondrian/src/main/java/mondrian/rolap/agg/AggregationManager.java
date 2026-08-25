@@ -18,7 +18,6 @@ import mondrian.rolap.*;
 import mondrian.rolap.SqlStatement.Type;
 import mondrian.rolap.aggmatcher.AggStar;
 import mondrian.server.Locus;
-import mondrian.server.Session;
 import mondrian.util.Pair;
 
 import org.apache.logging.log4j.Logger;
@@ -579,15 +578,6 @@ System.out.println(buf.toString());
         }
     }
 
-    public void ResetCacheManager() {
-        cacheMgr.shutdown();
-        // Now we can cleanup.
-        for (SegmentCacheWorker worker : cacheMgr.segmentCacheWorkers) {
-            worker.shutdown();
-        }
-        this.cacheMgr = new SegmentCacheManager(server);
-        Session.ResetAllCaches();
-    }
 }
 
 // End AggregationManager.java

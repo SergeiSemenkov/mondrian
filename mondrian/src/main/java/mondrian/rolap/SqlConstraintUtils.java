@@ -430,6 +430,29 @@ public class SqlConstraintUtils {
           return column.getStar();
         }
       };
+    } else if ( column.getFactColumnExpression() != null ) {
+      // A schema-declared AttributeMapping lets us skip the join to
+      // column's own dimension table entirely: the fact table already
+      // carries an equal-valued column. See RolapStar.Column's
+      // factColumnExpression javadoc.
+      final MondrianDef.Expression factExpr = column.getFactColumnExpression();
+      return new Column( column.getDatatype() ) {
+        public String generateExprString( SqlQuery query ) {
+          return factExpr.getExpression( query );
+        }
+
+        public int getBitPosition() {
+          return column.getBitPosition();
+        }
+
+        public Table getTable() {
+          return column.getTable();
+        }
+
+        public RolapStar getStar() {
+          return column.getStar();
+        }
+      };
     } else {
       column.getTable().addToFrom( sqlQuery, false, true );
       return column;
@@ -447,6 +470,8 @@ public class SqlConstraintUtils {
       AggStar.Table table = aggColumn.getTable();
       table.addToFrom( sqlQuery, false, true );
       expr = aggColumn.generateExprString( sqlQuery );
+    } else if ( column.getFactColumnExpression() != null ) {
+      expr = column.getFactColumnExpression().getExpression( sqlQuery );
     } else {
       RolapStar.Table table = column.getTable();
       table.addToFrom( sqlQuery, false, true );
@@ -1375,6 +1400,8 @@ public class SqlConstraintUtils {
         }
 
         columnString = aggColumn.generateExprString( query );
+      } else if ( column.getFactColumnExpression() != null ) {
+        columnString = column.getFactColumnExpression().getExpression( query );
       } else {
         columnString = column.generateExprString( query );
       }
@@ -1655,6 +1682,8 @@ public class SqlConstraintUtils {
         AggStar.Table table = aggColumn.getTable();
         table.addToFrom( sqlQuery, false, true );
         columnString = aggColumn.generateExprString( sqlQuery );
+      } else if ( column.getFactColumnExpression() != null ) {
+        columnString = column.getFactColumnExpression().getExpression( sqlQuery );
       } else {
         RolapStar.Table targetTable = column.getTable();
         hierarchy.addToFrom( sqlQuery, targetTable );
@@ -1801,6 +1830,8 @@ public class SqlConstraintUtils {
           AggStar.Table table = aggColumn.getTable();
           table.addToFrom( sqlQuery, false, true );
           q = aggColumn.generateExprString( sqlQuery );
+        } else if ( column.getFactColumnExpression() != null ) {
+          q = column.getFactColumnExpression().getExpression( sqlQuery );
         } else {
           RolapStar.Table targetTable = column.getTable();
           hierarchy.addToFrom( sqlQuery, targetTable );

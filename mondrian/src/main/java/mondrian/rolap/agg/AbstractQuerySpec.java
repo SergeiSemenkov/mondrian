@@ -115,9 +115,26 @@ public abstract class AbstractQuerySpec implements QuerySpec {
             // this is a funky dimension -- ignore for now
             return;
         }
-        table.addToFrom(sqlQuery, false, true);
 
-        String expr = column.generateExprString(sqlQuery);
+        String expr;
+        if (column.getFactColumnExpression() != null) {
+            // A schema-declared AttributeMapping (see the field javadoc on
+            // RolapStar.Column.factColumnExpression) lets this whole segment
+            // query -- WHERE clause, SELECT list, and GROUP BY alike -- read
+            // an equal-valued column already on the fact table, skipping the
+            // join to column's own dimension table entirely. Segments are
+            // cached generically by the value of every constrained column
+            // (isPartOfSelect defaults to true), not narrowly to one query's
+            // predicate, so unlike the WHERE-only substitutions in
+            // SqlConstraintUtils, there is no way to get the join-avoidance
+            // win here without also substituting the SELECT/GROUP BY
+            // expression -- safe only because the mapping's whole contract is
+            // that both columns hold identical values for matching rows.
+            expr = column.getFactColumnExpression().getExpression(sqlQuery);
+        } else {
+            table.addToFrom(sqlQuery, false, true);
+            expr = column.generateExprString(sqlQuery);
+        }
 
         StarColumnPredicate predicate = getColumnPredicate(column);
         final String where = RolapStar.Column.createInExpr(

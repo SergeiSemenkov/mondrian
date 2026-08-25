@@ -882,6 +882,28 @@ public class RolapStar {
         private AtomicLong approxCardinality = new AtomicLong(
             Long.MIN_VALUE);
 
+        /**
+         * Optional alternate expression, on the fact table itself, that is
+         * guaranteed to hold the same values as this column for every row
+         * that would otherwise require joining {@link #table} to obtain
+         * them. Set from a schema-declared {@code AttributeMapping} (see
+         * {@code context/native_query.md} for the design). Not part of
+         * {@link #equals}/{@link #hashCode}/bit-position identity -- it is a
+         * query-generation shortcut, not part of what this star column
+         * logically is, so it must never affect segment-cache keys or
+         * aggregate-table (AggStar) recognition. Consulted only by the
+         * handful of WHERE-clause predicate builders in
+         * {@link SqlConstraintUtils} that opt in explicitly, and by
+         * {@link mondrian.rolap.agg.AbstractQuerySpec#addColumn} (segment
+         * loading's SELECT/GROUP BY/WHERE all share one expression there --
+         * see its own comment for why that one substitutes the SELECT list
+         * too, not just the predicate). Left alone by every query that
+         * actually enumerates or displays members from the dimension table
+         * itself (e.g. {@link SqlMemberSource}), which must keep reading the
+         * real dimension-table column.
+         */
+        private MondrianDef.Expression factColumnExpression;
+
         private Column(
             String name,
             Table table,
@@ -1002,6 +1024,25 @@ public class RolapStar {
 
         public MondrianDef.Expression getExpression() {
             return expression;
+        }
+
+        /**
+         * Returns the fact-table expression that may be used in place of
+         * this column when generating a WHERE-clause predicate against an
+         * already-known set of member keys, or null if no such mapping was
+         * declared for this column's attribute. See the field javadoc.
+         */
+        public MondrianDef.Expression getFactColumnExpression() {
+            return factColumnExpression;
+        }
+
+        /**
+         * Sets the fact-table expression described by
+         * {@link #getFactColumnExpression()}. Called once, at star-build
+         * time, from {@link Table#makeColumns}.
+         */
+        void setFactColumnExpression(MondrianDef.Expression factColumnExpression) {
+            this.factColumnExpression = factColumnExpression;
         }
 
         /**
@@ -1535,9 +1576,50 @@ public class RolapStar {
 
             if (column != null) {
                 level.setStarKeyColumn(column);
+                applyFactColumnMapping(level, column);
             }
 
             return column;
+        }
+
+        /**
+         * If {@code level} was generated from a {@code DimensionAttribute}
+         * (see {@code context/attribute_implementaion.md}) and that
+         * attribute's owning {@code CubeDimension} usage (the private
+         * {@code Dimension} or {@code DimensionUsage} this cube actually
+         * uses) declares an {@code AttributeMapping} naming it, resolves the
+         * mapping's {@code factColumn} against this star's fact table and
+         * records it on {@code column} via
+         * {@link Column#setFactColumnExpression}.
+         *
+         * <p>Deliberately does nothing when {@code level.getSourceAttribute()}
+         * is null (a classic, non-attribute level) or when no mapping names
+         * this attribute -- the vast majority of levels take this path
+         * unchanged.
+         */
+        private void applyFactColumnMapping(RolapCubeLevel level, Column column) {
+            String attributeName = level.getSourceAttribute();
+            if (attributeName == null) {
+                return;
+            }
+            MondrianDef.CubeDimension xmlDimension =
+                level.getDimension().xmlDimension;
+            if (xmlDimension == null
+                || xmlDimension.attributeMappings == null)
+            {
+                return;
+            }
+            for (MondrianDef.AttributeMapping mapping
+                : xmlDimension.attributeMappings)
+            {
+                if (mapping.attribute.equals(attributeName)) {
+                    RolapStar.Table factTable = star.getFactTable();
+                    column.setFactColumnExpression(
+                        new MondrianDef.Column(
+                            factTable.getAlias(), mapping.factColumn));
+                    return;
+                }
+            }
         }
 
         private Column makeColumnForLevelExpr(

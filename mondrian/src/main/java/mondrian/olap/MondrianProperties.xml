@@ -1654,18 +1654,6 @@ log4j.configuration=file:log4j.properties</code></blockquote>
         <Default>0</Default>
     </PropertyDefinition>
     <PropertyDefinition>
-        <Name>ClearCachesOnOutOfMemory</Name>
-        <Path>mondrian.server.ClearCachesOnOutOfMemory</Path>
-        <Description>
-            <p>
-                If true, all session caches are cleared when an OutOfMemory exception occurs.
-                Default: false.
-            </p>
-        </Description>
-        <Type>boolean</Type>
-        <Default>false</Default>
-    </PropertyDefinition>
-    <PropertyDefinition>
         <Name>LoadAllMembersToCache</Name>
         <Path>mondrian.server.LoadAllMembersToCache</Path>
         <Description>
