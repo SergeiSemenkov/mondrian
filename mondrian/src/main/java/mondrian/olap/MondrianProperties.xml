@@ -904,11 +904,22 @@ perform a drillthrough of any kind.
         <Path>mondrian.xmla.drillthroughTotalCount.enable</Path>
         <Category>XML/A</Category>
         <Description>
-If enabled, first row in the result of an XML/A drill-through request
-will be filled with the total count of rows in underlying database.
+If enabled, the first row in the result of an XML/A drill-through request is a
+synthetic row carrying the total count of rows in the underlying database,
+repeated into every column.
+
+&lt;p&gt;Disabled by default. The row is not part of the XML/A rowset contract and no
+Microsoft client consumes it: clients that tolerate it show it to the user as a
+first record of nonsense (a store name of "7978", a date of "7978"), and clients
+that do not have been reported to fail the whole response with a parse error.
+It is also shaped differently from the real rows around it - it carries no
+xsi:type attributes, and it emits every column including the ones real rows omit
+when their value is null.
+
+&lt;p&gt;Enable it only for a client you control that is known to expect the row.
         </Description>
         <Type>boolean</Type>
-        <Default>true</Default>
+        <Default>false</Default>
     </PropertyDefinition>
     <PropertyDefinition>
         <Name>CaseSensitive</Name>
