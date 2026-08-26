@@ -124,8 +124,14 @@ public class FastBatchingCellReader implements CellReader {
         }
 
         // Try to retrieve a cell and simultaneously pin the segment which
-        // contains it.
-        final Object o = aggMgr.getCellFromCache(request, pinnedSegments);
+        // contains it, then let any value written back on this connection's scenario override or
+        // adjust it, so an UPDATE CUBE is visible to the queries that follow it. This reader is
+        // what serves cells during the load phase, so the check belongs here as well as in
+        // RolapAggregationManager's cache reader; between them they cover every path by which a
+        // stored measure's value is read. A cell written back outright needs no segment at all, so
+        // it counts as a hit. See emondrian-modules' context/writeback.md.
+        final Object o = RolapAggregationManager.applyScenarioOverride(
+            evaluator, request, aggMgr.getCellFromCache(request, pinnedSegments));
 
         assert o != Boolean.TRUE : "getCellFromCache no longer returns TRUE";
         if (o != null) {
@@ -143,8 +149,12 @@ public class FastBatchingCellReader implements CellReader {
             SegmentWithData segmentWithData = cacheMgr.peek(request);
             if (segmentWithData != null) {
                 segmentWithData.getStar().register(segmentWithData);
-                final Object o2 =
-                    aggMgr.getCellFromCache(request, pinnedSegments);
+                // Same override treatment as above: this is a second, easily-missed path by
+                // which a cell is served straight from cache.
+                final Object o2 = RolapAggregationManager.applyScenarioOverride(
+                    evaluator,
+                    request,
+                    aggMgr.getCellFromCache(request, pinnedSegments));
                 if (o2 != null) {
                     ++hitCount;
                     return o2;

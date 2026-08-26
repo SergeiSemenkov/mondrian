@@ -926,6 +926,34 @@ public abstract class RolapAggregationManager {
     }
 
     /**
+     * Returns the value written back for this cell on the evaluator's active scenario, or null if
+     * there is no active scenario or this cell has not been written to.
+     *
+     * <p>Kept deliberately cheap for the overwhelmingly common case of no scenario at all: one
+     * null check on the connection before anything else happens.
+     */
+    static Object applyScenarioOverride(
+        RolapEvaluator evaluator,
+        CellRequest request,
+        Object cachedValue)
+    {
+        final Query query = evaluator.getQuery();
+        if (query == null) {
+            return cachedValue;
+        }
+        final Connection connection = query.getConnection();
+        if (!(connection instanceof RolapConnection)) {
+            return cachedValue;
+        }
+        final org.olap4j.Scenario scenario =
+            ((RolapConnection) connection).getScenario();
+        if (!(scenario instanceof ScenarioImpl)) {
+            return cachedValue;
+        }
+        return ((ScenarioImpl) scenario).applyOverride(request, cachedValue);
+    }
+
+    /**
      * Returns a {@link mondrian.rolap.CellReader} which reads cells from cache.
      */
     public CellReader getCacheCellReader() {
@@ -937,7 +965,14 @@ public abstract class RolapAggregationManager {
                     // request out of bounds
                     return Util.nullValue;
                 }
-                return getCellFromCache(request);
+                // A value written back on this connection's scenario wins over whatever the
+                // segment cache holds, so an UPDATE CUBE is visible to the queries that follow
+                // it. The override lives on the scenario, and a scenario belongs to one session,
+                // so this cannot leak one user's uncommitted write into another user's results
+                // the way patching the shared segment cache itself would.
+                // See emondrian-modules' context/writeback.md.
+                return applyScenarioOverride(
+                    evaluator, request, getCellFromCache(request));
             }
 
             public int getMissCount() {

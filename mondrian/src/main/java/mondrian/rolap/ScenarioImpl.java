@@ -15,6 +15,7 @@ import mondrian.calc.impl.GenericCalc;
 import mondrian.mdx.ResolvedFunCall;
 import mondrian.olap.*;
 import mondrian.olap.type.ScalarType;
+import mondrian.rolap.agg.CellRequest;
 
 import org.olap4j.AllocationPolicy;
 import org.olap4j.Scenario;
@@ -164,12 +165,106 @@ public final class ScenarioImpl implements Scenario {
                     baseCube,
                     new ArrayList<RolapMember>(members),
                     constrainedColumnsBitKey,
-                    compactKeyValues,
+                    keyValues,
                     newValue,
                     currentValue,
                     allocationPolicy);
         writebackCells.add(writebackCell);
         writebackCellMap.put(members, writebackCell);
+    }
+
+    /**
+     * The value written back for the cell this request addresses, or null if none was.
+     *
+     * <p>This is what makes an {@code UPDATE CUBE} visible to ordinary queries. A writeback used to
+     * be readable only through the {@code [Scenario]} hierarchy's calculated member, so a cube
+     * without a dimension named {@code Scenario} accepted a write and then went on returning the
+     * stored value for ever. Matching on the request's own coordinates instead means the override
+     * is applied wherever the cell is read, with no special dimension required.
+     *
+     * <p>A request for the written cell itself is answered with the written value outright. A
+     * request for a cell that <em>rolls it up</em> - fewer constrained columns, all agreeing - has
+     * its stored total shifted by (new - old), since that total was computed before the write. That
+     * shift is only sound for a measure that sums, so a count, min, max or distinct count keeps
+     * showing its stored value; see context/writeback.md.
+     *
+     * @param request Cell request being served
+     * @param cachedValue Value the segment cache holds, or null if not loaded yet
+     * @return the value to report for this cell
+     */
+    public Object applyOverride(CellRequest request, Object cachedValue) {
+        // Most queries touch no written-back cells at all; keep that path free of work.
+        if (request == null || writebackCells.isEmpty()) {
+            return cachedValue;
+        }
+        final BitKey requestBitKey = request.getConstrainedColumnsBitKey();
+        final Object[] requestValues = request.getSingleValues();
+
+        double delta = 0d;
+        boolean haveDelta = false;
+
+        for (WritebackCell cell : writebackCells) {
+            if (cell.starMeasure != request.getMeasure()) {
+                continue;
+            }
+            if (cell.constrainedColumnsBitKey.equals(requestBitKey)) {
+                if (matches(cell, requestBitKey, requestValues)) {
+                    // The written cell itself: answer with the value that was written, without
+                    // needing the stored one at all.
+                    return cell.newValue;
+                }
+            } else if (cell.constrainedColumnsBitKey.isSuperSetOf(requestBitKey)) {
+                // The request is for a cell that rolls the written-back one up - fewer constrained
+                // columns, all agreeing. Its stored total predates the write, so shift it by the
+                // difference. Only valid for a measure that sums: a count, min, max or distinct
+                // count cannot be adjusted by adding a delta, so those aggregates are left showing
+                // the stored value (see context/writeback.md).
+                if (matches(cell, requestBitKey, requestValues)
+                    && request.getMeasure().getAggregator() == RolapAggregator.Sum)
+                {
+                    delta += cell.newValue - cell.currentValue;
+                    haveDelta = true;
+                }
+            }
+        }
+
+        if (!haveDelta || delta == 0d) {
+            return cachedValue;
+        }
+        if (cachedValue == null) {
+            // Nothing loaded yet; let the caller fetch it and adjust on the next pass, rather than
+            // inventing a total out of a delta alone.
+            return null;
+        }
+        if (!(cachedValue instanceof Number)) {
+            return cachedValue;
+        }
+        return ((Number) cachedValue).doubleValue() + delta;
+    }
+
+    /**
+     * Whether a writeback cell agrees with a request on every column the request constrains.
+     *
+     * <p>The request's values arrive compacted in bit order, so they are walked alongside the set
+     * bits of its key; the cell keeps its values indexed by bit position, which is what lets a
+     * request constraining a subset of the columns be compared at all.
+     */
+    private static boolean matches(
+        WritebackCell cell,
+        BitKey requestBitKey,
+        Object[] requestValues)
+    {
+        int i = 0;
+        for (int bitPos : requestBitKey) {
+            if (i >= requestValues.length) {
+                return false;
+            }
+            if (!Util.equals(cell.keyValuesByBitPosition[bitPos], requestValues[i])) {
+                return false;
+            }
+            i++;
+        }
+        return true;
     }
 
     public java.util.Map<List<RolapMember>, WritebackCell> writebackCellMap =
@@ -350,12 +445,23 @@ public final class ScenarioImpl implements Scenario {
         public List<RolapMember> members;
 
         /**
+         * The cell's coordinates in the form a {@link CellRequest} carries them - which is what
+         * lets an override be matched against a request as it is served from the segment cache.
+         * These were computed and then discarded before writeback values were made visible to
+         * ordinary queries.
+         */
+        private final BitKey constrainedColumnsBitKey;
+        /** Key values indexed by star column bit position, not compacted. */
+        private final Object[] keyValuesByBitPosition;
+        private final RolapStar.Measure starMeasure;
+
+        /**
          * Creates a WritebackCell.
          *
          * @param cube Cube
          * @param members Members that form context
          * @param constrainedColumnsBitKey Bitmap of columns which have values
-         * @param keyValues List of values, by bit position
+         * @param keyValuesByBitPosition Values indexed by star column bit position
          * @param newValue New value
          * @param currentValue Current value
          * @param allocationPolicy Allocation policy
@@ -364,15 +470,19 @@ public final class ScenarioImpl implements Scenario {
             RolapCube cube,
             List<RolapMember> members,
             BitKey constrainedColumnsBitKey,
-            Object[] keyValues,
+            Object[] keyValuesByBitPosition,
             double newValue,
             double currentValue,
             AllocationPolicy allocationPolicy)
         {
-            assert keyValues.length == constrainedColumnsBitKey.cardinality();
+            assert keyValuesByBitPosition.length
+                >= constrainedColumnsBitKey.cardinality();
             Util.discard(cube); // not used currently
-            Util.discard(constrainedColumnsBitKey); // not used currently
-            Util.discard(keyValues); // not used currently
+            this.constrainedColumnsBitKey = constrainedColumnsBitKey;
+            this.keyValuesByBitPosition = keyValuesByBitPosition;
+            this.starMeasure =
+                (RolapStar.Measure)
+                    ((RolapStoredMeasure) members.get(0)).getStarMeasure();
             this.members = members;
             this.newValue = newValue;
             this.currentValue = currentValue;
