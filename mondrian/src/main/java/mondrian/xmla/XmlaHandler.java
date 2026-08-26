@@ -1117,65 +1117,15 @@ public class XmlaHandler {
                             schema.lookupCube(refresh.getCubeName(), true);
                     cube.flushCache(rolapConnection);
                 } else if (queryPart instanceof Update) {
-                    Update update = (Update)queryPart;
-                    final mondrian.rolap.RolapSchema schema = rolapConnection.getSchema();
-                    for(Update.UpdateClause updateClause: update.getUpdateClauses()) {
-                        StringWriter sw = new StringWriter();
-                        PrintWriter pw = new mondrian.mdx.QueryPrintWriter(sw);
-                        updateClause.getTupleExp().unparse(pw);
-                        String tupleString = sw.toString();
-
-                        PreparedOlapStatement pstmt = connection.prepareOlapStatement(
-                                "SELECT "
-                                        + tupleString
-                                        + " ON 0 FROM "
-                                        + update.getCubeName()
-                                        + " CELL PROPERTIES CELL_ORDINAL"
-                        );
-                        CellSet cellSet = pstmt.executeQuery();
-                        CellSetAxis axis = cellSet.getAxes().get(0);
-                        if(axis.getPositionCount() == 0) {
-                            //Empty tuple exception
-                        }
-                        if (axis.getPositionCount() == 1) {
-                            //More than one tuple exception
-                        }
-                        Cell writeBackCell = cellSet.getCell(Arrays.asList(0));
-
-                        sw = new StringWriter();
-                        pw = new mondrian.mdx.QueryPrintWriter(sw);
-                        updateClause.getValueExp().unparse(pw);
-                        String valueString = sw.toString();
-
-                        pstmt = connection.prepareOlapStatement(
-                                "WITH MEMBER [Measures].[m1] AS "
-                                        + valueString
-                                        + " SELECT [Measures].[m1] ON 0 FROM "
-                                        + update.getCubeName()
-                                        + " CELL PROPERTIES VALUE"
-                        );
-                        cellSet = pstmt.executeQuery();
-                        Cell cell = cellSet.getCell(Arrays.asList(0));
-                        Double doubleValue = cell.getDoubleValue();
-
-                        writeBackCell.setValue(doubleValue, AllocationPolicy.EQUAL_ALLOCATION);
-                    }
+                    // Writeback lives in the emondrian writeback module, loaded from /modules -
+                    // it is licence-gated and under active development there. See
+                    // emondrian-modules' context/writeback.md.
+                    XmlaUtil.Writeback_executeUpdate(connection, (Update) queryPart);
                 } else if (queryPart instanceof TransactionCommand) {
-                    TransactionCommand transactionCommand = (TransactionCommand)queryPart;
-
-                    String sessionId = request.getSessionId();
-                    Session session = Session.get(sessionId);
-                    if(transactionCommand.getCommand() == TransactionCommand.Command.BEGIN) {
-                        Scenario scenario = connection.createScenario();
-                        session.setScenario(scenario);
-                    }
-                    else if(transactionCommand.getCommand() == TransactionCommand.Command.ROLLBACK) {
-                        session.setScenario(null);
-                    }
-                    else if(transactionCommand.getCommand() == TransactionCommand.Command.COMMIT) {
-                        session.setScenario(null);
-                    }
-
+                    XmlaUtil.Writeback_executeTransactionCommand(
+                            connection,
+                            (TransactionCommand) queryPart,
+                            request.getSessionId());
                 } else {
                     checkedCanceled(request);
                     result = executeQuery(request);

@@ -260,6 +260,101 @@ way too noisy
         return new OlapException(fullMessage);
     }
 
+    private static final String WRITEBACK_CLASS_NAME =
+        "emondrian.writeback.WritebackExecutor";
+
+    private static OlapException newWritebackModuleException(
+        String message,
+        Exception exception)
+    {
+        final Throwable rootCause = XmlaException.getRootCause(exception);
+        final String detail = rootCause.getMessage();
+        final String fullMessage = detail == null || detail.isEmpty()
+            ? message + DAX_LICENSE_NOT_FOUND_SUFFIX
+            : message + DAX_LICENSE_NOT_FOUND_SUFFIX + " Details: " + detail;
+        return new OlapException(fullMessage);
+    }
+
+    /**
+     * Invokes a static method of the writeback module, which is loaded from {@code /modules} at
+     * runtime rather than linked at build time - the same arrangement the DAX entry points below
+     * use.
+     *
+     * <p>An exception thrown by the module itself (an invalid licence, a cube that is not
+     * writeback-enabled, an unsupported allocation policy) is unwrapped and rethrown, so the client
+     * sees the module's own message rather than a reflection wrapper.
+     */
+    private static void invokeWritebackMethod(
+        String methodName,
+        Class<?>[] parameterTypes,
+        Object[] arguments) throws OlapException
+    {
+        final java.lang.reflect.Method method;
+        try {
+            Class<?> clazz = Class.forName(
+                WRITEBACK_CLASS_NAME,
+                true,
+                mondrian.xmla.MondrianModuleServletRegistrar.modulesLoader);
+            method = clazz.getMethod(methodName, parameterTypes);
+        } catch (ClassNotFoundException e) {
+            throw newWritebackModuleException(
+                "The emondrian writeback module was not found.", e);
+        } catch (NoSuchMethodException e) {
+            throw newWritebackModuleException(
+                "The emondrian writeback WritebackExecutor." + methodName
+                    + " method was not found.", e);
+        } catch (Exception e) {
+            throw newWritebackModuleException(
+                "The emondrian writeback module was not found.", e);
+        }
+
+        try {
+            method.invoke(null, arguments);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            final Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            if (cause instanceof OlapException) {
+                throw (OlapException) cause;
+            }
+            throw new OlapException(
+                cause == null ? e.getMessage() : cause.getMessage(), cause);
+        } catch (Exception e) {
+            throw newWritebackModuleException(
+                "The emondrian writeback module could not execute " + methodName + ".", e);
+        }
+    }
+
+    /** Executes an {@code UPDATE CUBE} statement through the writeback module. */
+    public static void Writeback_executeUpdate(
+        OlapConnection connection,
+        mondrian.olap.Update update) throws OlapException
+    {
+        invokeWritebackMethod(
+            "executeUpdate",
+            new Class<?>[] {OlapConnection.class, mondrian.olap.Update.class},
+            new Object[] {connection, update});
+    }
+
+    /**
+     * Executes a {@code BEGIN}/{@code COMMIT}/{@code ROLLBACK TRANSACTION} statement through the
+     * writeback module.
+     */
+    public static void Writeback_executeTransactionCommand(
+        OlapConnection connection,
+        mondrian.olap.TransactionCommand transactionCommand,
+        String sessionId) throws OlapException
+    {
+        invokeWritebackMethod(
+            "executeTransactionCommand",
+            new Class<?>[] {
+                OlapConnection.class,
+                mondrian.olap.TransactionCommand.class,
+                String.class},
+            new Object[] {connection, transactionCommand, sessionId});
+    }
+
     /**
      * Corrects for the differences between numeric strings arising because
      * JDBC drivers use different representations for numbers

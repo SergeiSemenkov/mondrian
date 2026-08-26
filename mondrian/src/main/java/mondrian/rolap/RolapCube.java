@@ -111,6 +111,20 @@ public class RolapCube extends CubeBase {
 
     final List<RolapWritebackTable> writebackTableList =
             new ArrayList<RolapWritebackTable>();
+
+    /**
+     * The cube's {@code <WritebackTable>} declarations, resolved against this cube's dimensions
+     * and measures at schema-load time.
+     *
+     * <p>Nothing in the engine consumes these - they describe where writeback values would be
+     * persisted, which is the writeback module's job (see emondrian-modules'
+     * context/writeback.md). This accessor exists so that module can reach them; without it the
+     * list was write-only and the schema element had no effect whatsoever.
+     */
+    public List<RolapWritebackTable> getWritebackTables() {
+        return Collections.unmodifiableList(writebackTableList);
+    }
+
     /**
      * Used for virtual cubes.
      * Contains a list of all base cubes related to a virtual cube

@@ -61,6 +61,22 @@ public class Update extends QueryPart {
         public Exp getValueExp() {
             return this.value;
         }
+
+        /**
+         * The allocation policy the statement asked for.
+         *
+         * <p>The grammar has always parsed this, but nothing could read it back, so the executor
+         * hardcoded equal allocation and every {@code USE_...} clause was silently ignored. The
+         * writeback module reads it here.
+         */
+        public Allocation getAllocation() {
+            return this.allocation;
+        }
+
+        /** The {@code BY <expr>} weight of a weighted allocation, or null if none was given. */
+        public Exp getWeightExp() {
+            return this.weight;
+        }
     }
 }
 
