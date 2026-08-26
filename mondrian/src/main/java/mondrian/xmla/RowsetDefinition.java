@@ -5849,6 +5849,21 @@ TODO: see above
             }
         }
 
+        /**
+         * Naming template for the levels generated for a parent-child hierarchy, matching the
+         * default Analysis Services {@code NamingTemplate} ("Level *"). Level 1 is the hierarchy's
+         * root members, so the numbering lines up with LEVEL_NUMBER.
+         */
+        private static final String PARENT_CHILD_LEVEL_NAME_FORMAT = "Level %02d";
+
+        /**
+         * Above this many members, a parent-child hierarchy reports its single physical level
+         * rather than one level per depth. Working out the depths means enumerating every member
+         * of the hierarchy, which is affordable for an org chart or a chart of accounts but is not
+         * something a metadata request should do to an arbitrarily large dimension.
+         */
+        private static final int MAX_PARENT_CHILD_MEMBERS_FOR_LEVEL_GENERATION = 50000;
+
         protected void populateHierarchy(
             OlapConnection connection,
             Catalog catalog,
@@ -5857,12 +5872,177 @@ TODO: see above
             List<Row> rows)
             throws XmlaException, SQLException
         {
+            if (getExtra(connection).isHierarchyParentChild(hierarchy)
+                && populateParentChildHierarchy(
+                    connection, catalog, cube, hierarchy, rows))
+            {
+                return;
+            }
             for (Level level
                 : filter(hierarchy.getLevels(), levelUnameCond, levelNameCond))
             {
                 outputLevel(
                     connection, catalog, cube, hierarchy, level, rows);
             }
+        }
+
+        /**
+         * Reports a parent-child hierarchy as one level per depth of the tree, the way Analysis
+         * Services does, instead of the single physical level Mondrian stores it as.
+         *
+         * <p>A parent-child hierarchy holds every member on one level and distinguishes them by
+         * depth in the tree (see {@code SqlMemberSource.RolapParentChildMember}, whose
+         * {@code getDepth()} returns tree depth rather than level depth). That is an accurate
+         * description of the storage but not of the hierarchy a client is asked to display: a
+         * seven-deep org chart was advertised as two levels, "(All)" and the key level, so a client
+         * driving its drill-down affordances off MDSCHEMA_LEVELS could only ever offer one level of
+         * drilling. SSAS generates a level per depth from its {@code NamingTemplate} property, and
+         * this reproduces that with the SSAS default template.
+         *
+         * <p>The generated levels are **metadata only**. They are deliberately not added to
+         * {@code Hierarchy.getLevels()}: that array is indexed by depth throughout the engine -
+         * member readers, aggregate-table recognition and SQL generation all walk it - and
+         * inserting levels with no columns behind them would corrupt query generation. The
+         * consequence to know about is that a generated level unique name such as
+         * {@code [Employees].[Level 03]} is not addressable in MDX; the hierarchy still has exactly
+         * one queryable level.
+         *
+         * @return whether the hierarchy was reported this way; false means the caller should fall
+         * back to listing the physical levels
+         */
+        private boolean populateParentChildHierarchy(
+            OlapConnection connection,
+            Catalog catalog,
+            Cube cube,
+            Hierarchy hierarchy,
+            List<Row> rows)
+            throws XmlaException, SQLException
+        {
+            Level parentChildLevel = null;
+            for (Level level : hierarchy.getLevels()) {
+                if (level.getLevelType() != Level.Type.ALL) {
+                    // A parent-child hierarchy has exactly one non-All level; anything else is not
+                    // the shape this method knows how to describe.
+                    if (parentChildLevel != null) {
+                        return false;
+                    }
+                    parentChildLevel = level;
+                }
+            }
+            if (parentChildLevel == null) {
+                return false;
+            }
+
+            // Count the members at each depth. Depth 1 is the hierarchy's root members: a
+            // parent-child member's depth is its parent's plus one, and the All member is depth 0.
+            final List<Integer> membersByDepth = new ArrayList<Integer>();
+            try {
+                final List<Member> members = parentChildLevel.getMembers();
+                if (members.size() > MAX_PARENT_CHILD_MEMBERS_FOR_LEVEL_GENERATION) {
+                    return false;
+                }
+                for (Member member : members) {
+                    final int depth = member.getDepth();
+                    if (depth < 1) {
+                        continue;
+                    }
+                    while (membersByDepth.size() < depth) {
+                        membersByDepth.add(0);
+                    }
+                    membersByDepth.set(depth - 1, membersByDepth.get(depth - 1) + 1);
+                }
+            } catch (Exception e) {
+                // Reading members can fail for reasons that have nothing to do with metadata (a
+                // dead connection, a role the caller cannot read under). Describing the hierarchy
+                // the old way is a better answer than failing the whole discovery request.
+                return false;
+            }
+            if (membersByDepth.isEmpty()) {
+                return false;
+            }
+
+            for (Level level : filter(hierarchy.getLevels(), levelUnameCond, levelNameCond)) {
+                if (level.getLevelType() == Level.Type.ALL) {
+                    outputLevel(connection, catalog, cube, hierarchy, level, rows);
+                }
+            }
+
+            for (int depth = 1; depth <= membersByDepth.size(); depth++) {
+                final String name =
+                    String.format(PARENT_CHILD_LEVEL_NAME_FORMAT, depth);
+                final String uniqueName =
+                    hierarchy.getUniqueName() + "." + Util.quoteMdxIdentifier(name);
+                if (!matchesLevelRestrictions(name, uniqueName)) {
+                    continue;
+                }
+                outputGeneratedParentChildLevel(
+                    connection, catalog, cube, hierarchy, parentChildLevel,
+                    name, uniqueName, depth, membersByDepth.get(depth - 1), rows);
+            }
+            return true;
+        }
+
+        /**
+         * Applies the LEVEL_NAME/LEVEL_UNIQUE_NAME restrictions by hand. The {@code levelNameCond}/
+         * {@code levelUnameCond} conditions used for real levels take a {@link Level} object, which
+         * a generated level does not have.
+         */
+        private boolean matchesLevelRestrictions(String name, String uniqueName) {
+            final String nameRestriction =
+                getRestrictionValueAsString(LevelName);
+            if (nameRestriction != null && !nameRestriction.equals(name)) {
+                return false;
+            }
+            final String unameRestriction =
+                getRestrictionValueAsString(LevelUniqueName);
+            return unameRestriction == null
+                || unameRestriction.equals(uniqueName);
+        }
+
+        /** Emits one generated parent-child level. See {@link #populateParentChildHierarchy}. */
+        private void outputGeneratedParentChildLevel(
+            OlapConnection connection,
+            Catalog catalog,
+            Cube cube,
+            Hierarchy hierarchy,
+            Level parentChildLevel,
+            String name,
+            String uniqueName,
+            int depth,
+            int cardinality,
+            List<Row> rows)
+            throws XmlaException, SQLException
+        {
+            final XmlaHandler.XmlaExtra extra = getExtra(connection);
+
+            Row row = new Row();
+            row.set(CatalogName.name, catalog.getName());
+            row.set(SchemaName.name, cube.getSchema().getName());
+            row.set(CubeName.name, cube.getName());
+            row.set(
+                DimensionUniqueName.name,
+                hierarchy.getDimension().getUniqueName());
+            row.set(HierarchyUniqueName.name, hierarchy.getUniqueName());
+            row.set(LevelName.name, name);
+            row.set(LevelUniqueName.name, uniqueName);
+            row.set(LevelCaption.name, name);
+            row.set(LevelNumber.name, depth);
+            row.set(LevelCardinality.name, cardinality);
+            row.set(LevelType.name, MDLEVEL_TYPE_REGULAR);
+            row.set(CustomRollupSettings.name, 0);
+
+            int uniqueSettings = 0;
+            if (extra.isLevelUnique(parentChildLevel)) {
+                uniqueSettings |= 1;
+            }
+            row.set(LevelUniqueSettings.name, uniqueSettings);
+            row.set(LevelIsVisible.name, parentChildLevel.isVisible());
+            row.set(
+                Description.name,
+                cube.getName() + " Cube - " + getHierarchyName(hierarchy)
+                + " Hierarchy - " + name + " Level");
+            row.set(LevelOrigin.name, 0);
+            addRow(row, rows);
         }
 
         /**

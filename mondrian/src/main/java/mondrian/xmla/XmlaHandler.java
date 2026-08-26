@@ -3226,12 +3226,23 @@ public class XmlaHandler {
         {
             Member member = members[memberOrdinal];
             final int depth = level.getDepth();
-            if (member.getDepth() < depth) {
+            // Compare the member's *level* depth, not Member.getDepth(). The two agree for
+            // every ordinary member (RolapMemberBase.getDepth() returns getLevel().getDepth(),
+            // and DelegatingRolapMember forwards it), but a parent-child member reports its
+            // depth in the tree instead (SqlMemberSource.RolapParentChildMember) while every
+            // member of the hierarchy shares a single level. Walking by that tree depth climbed
+            // to an ancestor and wrote *its* property here, so a flattened result showed the
+            // root member's value on every row - e.g. FoodMart HR's [Employees], whose
+            // MEMBER_CAPTION column came back "Sheri Nowmer" for every employee.
+            // Using the level's depth on both sides also makes the comparison consistent about
+            // MondrianOlap4jLevel's role-based depth offset, which Member.getDepth() does not
+            // apply.
+            if (member.getLevel().getDepth() < depth) {
                 // This column deals with a level below the current member.
                 // There is no value to write.
                 return;
             }
-            while (member.getDepth() > depth) {
+            while (member.getLevel().getDepth() > depth) {
                 member = member.getParentMember();
             }
             final Object propertyValue = member.getPropertyValue(property);

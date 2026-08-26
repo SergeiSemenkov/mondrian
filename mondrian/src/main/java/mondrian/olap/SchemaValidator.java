@@ -116,7 +116,7 @@ public class SchemaValidator {
         "foreignKey", "highCardinality", "table", "primaryKey", "source", "level");
 
     private static final Set<String> COLUMN_TAGS = Set.of(
-        "KeyColumn", "NameColumn", "OrderByColumn", "ValueColumn");
+        "KeyColumn", "NameColumn", "OrderByColumn", "ValueColumn", "ParentColumn");
 
     /** Elements that give a hierarchy a relation of its own. */
     private static final Set<String> RELATION_TAGS = Set.of(

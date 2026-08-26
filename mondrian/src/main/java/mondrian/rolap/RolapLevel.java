@@ -431,14 +431,26 @@ public class RolapLevel extends LevelBase {
             // level's place in its hierarchy, not of the attribute supplying the
             // column, so they are taken from the level as usual. Only the parent
             // column needs rebinding: getParentExp() would bind it to
-            // Level.table, which an attribute-based level does not set.
+            // Level.table, which an attribute-based level does not set. A level
+            // that declares no parentColumn/parentExp of its own falls back to
+            // its sourceAttribute's own parentColumn, if any (see
+            // context/parent_child.md) -- nullParentValue still always comes
+            // from the Level, since "what marks a root" is a property of this
+            // level's place in the hierarchy, not of the attribute's column.
             if (xmlLevel.parentColumn != null) {
                 MondrianDef.Column parentColumn = new MondrianDef.Column();
                 parentColumn.table = dimensionTable;
                 parentColumn.name = xmlLevel.parentColumn;
                 parentExp = parentColumn;
-            } else {
+            } else if (xmlLevel.getParentExp() != null) {
                 parentExp = xmlLevel.getParentExp();
+            } else if (sourceAttr.parentColumn != null) {
+                MondrianDef.Column parentColumn = new MondrianDef.Column();
+                parentColumn.table = dimensionTable;
+                parentColumn.name = sourceAttr.parentColumn.columnName;
+                parentExp = parentColumn;
+            } else {
+                parentExp = null;
             }
             nullParentValue = xmlLevel.nullParentValue;
             closure = xmlLevel.closure;

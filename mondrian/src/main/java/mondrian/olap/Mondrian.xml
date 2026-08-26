@@ -2808,6 +2808,15 @@ Revision is $Id$
         <Object name="valueColumn" type="ValueColumn">
             <Doc>The column that provides the value for the attribute members.</Doc>
         </Object>
+        <Object name="parentColumn" type="ParentColumn">
+            <Doc>
+                The column that references the parent member of this attribute's
+                member, for a parent-child hierarchy. Used as a fallback by a
+                sourceAttribute Level that declares no parentColumn/parentExp of
+                its own (Level.parentColumn always takes precedence when set) --
+                see context/parent_child.md.
+            </Doc>
+        </Object>
     </Element>
 
     <!-- AttributeMapping ======================================= -->
@@ -2893,6 +2902,7 @@ Revision is $Id$
     <Element type="OrderByColumn" class="DataItem"/>
     <Element type="NameColumn" class="DataItem"/>
     <Element type="ValueColumn" class="DataItem"/>
+    <Element type="ParentColumn" class="DataItem"/>
 
 </Model>
 
