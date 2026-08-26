@@ -299,6 +299,15 @@ public class XmlaHandler {
         Session session = Session.getWithoutCheck(sessionId);
         if (session != null) {
             connection.setScenario(session.getScenario());
+            // Who is on this session, and against what. Recorded here because
+            // BeginSession is handled before the request is authenticated, so
+            // the session itself cannot know either at creation. Reported by
+            // DISCOVER_SESSIONS.
+            session.noteRequest(
+                request.getAuthenticatedUser() != null
+                    ? request.getAuthenticatedUser()
+                    : request.getUsername(),
+                catalogName);
         }
 
         return connection;

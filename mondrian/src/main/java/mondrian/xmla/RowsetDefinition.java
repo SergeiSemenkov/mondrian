@@ -285,6 +285,45 @@ public enum RowsetDefinition {
     },
 
     /**
+     * Returns the sessions currently open on the server.
+     *
+     * <p>Power BI's gateway probes this rowset while configuring a connection,
+     * and a server that does not implement it fails the whole configuration
+     * with "No enum constant DISCOVER_SESSIONS".
+     *
+     * <p>restrictions
+     *
+     * <ul>
+     * <li>SESSION_ID
+     * <li>SESSION_SPID
+     * <li>SESSION_USER_NAME
+     * <li>SESSION_CURRENT_DATABASE
+     * </ul>
+     */
+    DISCOVER_SESSIONS(
+        6,
+        "0BC46A88-2B4C-4F2E-B0E2-2E1F5DE1C1D7",
+        "Returns a list of the sessions currently open on the server.",
+        new Column[] {
+            DiscoverSessionsRowset.SessionId,
+            DiscoverSessionsRowset.SessionSpid,
+            DiscoverSessionsRowset.SessionUserName,
+            DiscoverSessionsRowset.SessionCurrentDatabase,
+            DiscoverSessionsRowset.SessionStartTime,
+            DiscoverSessionsRowset.SessionElapsedTimeMs,
+            DiscoverSessionsRowset.SessionIdleTimeMs,
+            DiscoverSessionsRowset.SessionStatus,
+        },
+        new Column[] {
+            DiscoverSessionsRowset.SessionId,
+        })
+    {
+        public Rowset getRowset(XmlaRequest request, XmlaHandler handler) {
+            return new DiscoverSessionsRowset(request, handler);
+        }
+    },
+
+    /**
      *
      *
      *
@@ -2292,6 +2331,181 @@ public enum RowsetDefinition {
                 }
             }
             return new ArrayList<Enumeration>(enumeratorSet);
+        }
+
+        protected void setProperty(
+            PropertyDefinition propertyDef, String value)
+        {
+            switch (propertyDef) {
+            case Content:
+                break;
+            default:
+                super.setProperty(propertyDef, value);
+            }
+        }
+    }
+
+    /**
+     * The sessions currently open on the server.
+     *
+     * <p><b>Who sees what.</b> A session row names the user on that session, so
+     * returning every session to every caller would let any client enumerate
+     * who else is connected. A caller holding {@code logs="read"} - the
+     * capability for operational visibility into the running server - sees all
+     * sessions; everyone else sees only their own. That is enough for the case
+     * this rowset was implemented for: Power BI's gateway probes it from inside
+     * its own session.
+     */
+    static class DiscoverSessionsRowset extends Rowset {
+        DiscoverSessionsRowset(XmlaRequest request, XmlaHandler handler) {
+            super(DISCOVER_SESSIONS, request, handler);
+        }
+
+        private static final Column SessionId =
+            new Column(
+                "SESSION_ID",
+                Type.String,
+                null,
+                Column.RESTRICTION,
+                Column.REQUIRED,
+                "The session identifier.");
+        private static final Column SessionSpid =
+            new Column(
+                "SESSION_SPID",
+                Type.Integer,
+                null,
+                Column.RESTRICTION,
+                Column.REQUIRED,
+                "The server process identifier of the session.");
+        private static final Column SessionUserName =
+            new Column(
+                "SESSION_USER_NAME",
+                Type.String,
+                null,
+                Column.RESTRICTION,
+                Column.OPTIONAL,
+                "The user associated with the session.");
+        private static final Column SessionCurrentDatabase =
+            new Column(
+                "SESSION_CURRENT_DATABASE",
+                Type.String,
+                null,
+                Column.RESTRICTION,
+                Column.OPTIONAL,
+                "The catalog the session is currently connected to.");
+        private static final Column SessionStartTime =
+            new Column(
+                "SESSION_START_TIME",
+                Type.DateTime,
+                null,
+                Column.NOT_RESTRICTION,
+                Column.OPTIONAL,
+                "The time the session was opened.");
+        private static final Column SessionElapsedTimeMs =
+            new Column(
+                "SESSION_ELAPSED_TIME_MS",
+                Type.Long,
+                null,
+                Column.NOT_RESTRICTION,
+                Column.OPTIONAL,
+                "Milliseconds since the session was opened.");
+        private static final Column SessionIdleTimeMs =
+            new Column(
+                "SESSION_IDLE_TIME_MS",
+                Type.Long,
+                null,
+                Column.NOT_RESTRICTION,
+                Column.OPTIONAL,
+                "Milliseconds since the last request on the session.");
+        private static final Column SessionStatus =
+            new Column(
+                "SESSION_STATUS",
+                Type.Integer,
+                null,
+                Column.NOT_RESTRICTION,
+                Column.OPTIONAL,
+                "0 if the session is idle, 1 if a request is in flight.");
+
+        public void populateImpl(
+            XmlaResponse response, OlapConnection connection, List<Row> rows)
+            throws XmlaException
+        {
+            final boolean seesAllSessions =
+                ServerPermissions.isGrantedAtServerLevel(
+                    XmlaHandler.identityOf(this.request),
+                    ServerPermissions.Capability.LOGS_READ);
+            final String ownSessionId = this.request.getSessionId();
+
+            final String idRestriction =
+                getRestrictionValueAsString(SessionId);
+            final String userRestriction =
+                getRestrictionValueAsString(SessionUserName);
+            final String databaseRestriction =
+                getRestrictionValueAsString(SessionCurrentDatabase);
+            final int spidRestriction =
+                getRestrictionValueAsInt(SessionSpid);
+
+            final java.time.LocalDateTime now = java.time.LocalDateTime.now();
+
+            for (mondrian.server.Session session
+                : mondrian.server.Session.getSessions())
+            {
+                final String id = session.getSessionId();
+                if (!seesAllSessions && !id.equals(ownSessionId)) {
+                    continue;
+                }
+                if (idRestriction != null && !idRestriction.equals(id)) {
+                    continue;
+                }
+                if (spidRestriction != -1 && spidRestriction != session.getSpid()) {
+                    continue;
+                }
+                if (userRestriction != null
+                    && !userRestriction.equals(session.getUserName()))
+                {
+                    continue;
+                }
+                if (databaseRestriction != null
+                    && !databaseRestriction.equals(session.getCurrentDatabase()))
+                {
+                    continue;
+                }
+
+                final Row row = new Row();
+                row.set(SessionId.name, id);
+                row.set(SessionSpid.name, session.getSpid());
+                if (session.getUserName() != null) {
+                    row.set(SessionUserName.name, session.getUserName());
+                }
+                if (session.getCurrentDatabase() != null) {
+                    row.set(
+                        SessionCurrentDatabase.name, session.getCurrentDatabase());
+                }
+                row.set(SessionStartTime.name, session.getStartTime().toString());
+                row.set(
+                    SessionElapsedTimeMs.name,
+                    millisBetween(session.getStartTime(), now));
+                row.set(
+                    SessionIdleTimeMs.name,
+                    millisBetween(session.getCheckInTime(), now));
+                // Nothing tracks per-session command state, and inventing a
+                // "running" flag would be a guess; every session that answers
+                // is by definition between requests from this rowset's point of
+                // view.
+                row.set(SessionStatus.name, 0);
+                addRow(row, rows);
+            }
+        }
+
+        private static long millisBetween(
+            java.time.LocalDateTime from, java.time.LocalDateTime to)
+        {
+            if (from == null) {
+                return 0L;
+            }
+            final long millis =
+                java.time.Duration.between(from, to).toMillis();
+            return millis < 0 ? 0L : millis;
         }
 
         protected void setProperty(

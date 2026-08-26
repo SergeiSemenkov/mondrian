@@ -82,13 +82,82 @@ public class Session
     }
 
     String sessionId;
+
+    /** Server-assigned small integer, reported to clients as SESSION_SPID. */
+    private final int spid;
+
+    private final java.time.LocalDateTime startTime;
+
+    /**
+     * Caller and catalog of the most recent request on this session, recorded
+     * by {@code XmlaHandler} because they are not known when the session is
+     * created - {@code BeginSession} is handled before the request is
+     * authenticated. Null until the session carries a request.
+     */
+    private volatile String userName;
+    private volatile String currentDatabase;
+
+    private static final java.util.concurrent.atomic.AtomicInteger NEXT_SPID =
+        new java.util.concurrent.atomic.AtomicInteger(1);
+
     Session(String sessionId)
     {
         this.sessionId = sessionId;
+        this.spid = NEXT_SPID.getAndIncrement();
+        this.startTime = java.time.LocalDateTime.now();
         // Set here rather than after the map insert below: the reaper reads
         // this field as soon as the session is reachable, and used to find it
         // null in that window.
         this.checkInTime = java.time.LocalDateTime.now();
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public int getSpid() {
+        return spid;
+    }
+
+    public java.time.LocalDateTime getStartTime() {
+        return startTime;
+    }
+
+    /** Time of the most recent request on this session; drives idle reaping. */
+    public java.time.LocalDateTime getCheckInTime() {
+        return checkInTime;
+    }
+
+    public String getUserName() {
+        return userName;
+    }
+
+    public String getCurrentDatabase() {
+        return currentDatabase;
+    }
+
+    /**
+     * Records who is using this session and against which catalog, for
+     * DISCOVER_SESSIONS. Called once per request; the last request wins, which
+     * is what "current database" means.
+     */
+    public void noteRequest(String userName, String currentDatabase) {
+        if (userName != null) {
+            this.userName = userName;
+        }
+        if (currentDatabase != null) {
+            this.currentDatabase = currentDatabase;
+        }
+    }
+
+    /**
+     * A snapshot of the live sessions.
+     *
+     * <p>A copy, not the live map: DISCOVER_SESSIONS walks this while request
+     * threads open and close sessions and the reaper removes idle ones.
+     */
+    public static java.util.List<Session> getSessions() {
+        return new java.util.ArrayList<Session>(sessions.values());
     }
     public static Session create(String sessionId) throws OlapException
     {
