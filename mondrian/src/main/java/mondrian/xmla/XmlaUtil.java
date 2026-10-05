@@ -260,6 +260,29 @@ way too noisy
         return new OlapException(fullMessage);
     }
 
+    /**
+     * Reports a failure that came from <em>inside</em> a module, after it was found and called.
+     *
+     * <p>Such a failure is reached through {@link java.lang.reflect.InvocationTargetException},
+     * and it is almost never a deployment problem: a DAX syntax error, an unknown cube, a column
+     * that does not exist, or a licence the module itself refuses -- in which case the module's
+     * own message already says so. Reporting these as "the module was not found. Or a proper
+     * license was not found" sent people to check the /modules directory and their licence file
+     * for what was really a mistake in the query. The module's own message is the useful one, so
+     * that is what this hands back, with the original exception kept as the cause.
+     */
+    private static OlapException newModuleFailure(
+        java.lang.reflect.InvocationTargetException exception)
+    {
+        final Throwable target = exception.getTargetException() == null
+            ? exception
+            : exception.getTargetException();
+        final String detail = target.getMessage();
+        return new OlapException(
+            detail == null || detail.isEmpty() ? target.toString() : detail,
+            target);
+    }
+
     private static final String WRITEBACK_CLASS_NAME =
         "emondrian.writeback.WritebackExecutor";
 
@@ -707,8 +730,10 @@ way too noisy
             throw newDaxModuleException(
                 "The emondrian DAX CsdlSchemaGenerator.getCsdlXmlElement method was not found.",
                 e);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw newModuleFailure(e);
         } catch (Exception e) {
-            throw newDaxModuleException("The emondrian DAX module was not found.", e);
+            throw newDaxModuleException("The emondrian DAX module could not be called.", e);
         }
     }
 
@@ -742,8 +767,10 @@ way too noisy
             throw newDaxModuleException(
                 "The emondrian DAX DaxParser.parseQuery method was not found.",
                 e);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw newModuleFailure(e);
         } catch (Exception e) {
-            throw newDaxModuleException("The emondrian DAX module was not found.", e);
+            throw newDaxModuleException("The emondrian DAX module could not be called.", e);
         }
     }
 
@@ -777,8 +804,10 @@ way too noisy
             throw newDaxModuleException(
                 "The emondrian DAX DaxParser.parseExpression method was not found.",
                 e);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            throw newModuleFailure(e);
         } catch (Exception e) {
-            throw newDaxModuleException("The emondrian DAX module was not found.", e);
+            throw newDaxModuleException("The emondrian DAX module could not be called.", e);
         }
     }
 
