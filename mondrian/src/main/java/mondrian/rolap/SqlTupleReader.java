@@ -477,6 +477,11 @@ public class SqlTupleReader implements TupleReader {
       int limit = MondrianProperties.instance().ResultLimit.get();
       int fetchCount = 0;
 
+      // Rows actually consumed from the result set, counted here rather than reusing
+      // fetchCount above: that one is only incremented inside the `limit > 0 &&` condition, so
+      // it stays at zero whenever mondrian.result.limit is unset (its default).
+      int rowsRead = 0;
+
       // determine how many enum targets we have
       int enumTargetCount = getEnumTargetCount();
       int[] srcMemberIdxes = null;
@@ -506,6 +511,27 @@ public class SqlTupleReader implements TupleReader {
           throw MondrianResource.instance().MemberFetchLimitExceeded
             .ex( (long) limit );
         }
+
+        // Stop at maxRows ourselves rather than trusting the driver to have honoured the
+        // Statement.setMaxRows( maxRows ) that RolapUtil.executeQuery asked for (see
+        // SqlStatement's own setMaxRows call). That hint is how a native TopCount/BottomCount
+        // applies its count -- RolapNativeTopCount.createEvaluator calls
+        // SetEvaluator.setMaxRows(count), which lands here -- and nothing downstream truncates
+        // the result, so a driver that accepts the hint and ignores it turns
+        // "TopCount(<set>, 3, <measure>)" into the whole set, correctly ordered and never
+        // trimmed. ClickHouse's driver does exactly that: clickhouse-jdbc 0.8.2 returns 3 from
+        // getMaxRows() after setMaxRows( 3 ) and then hands back every row, while HSQLDB's
+        // honours it -- which is why this only showed up on one of two deployed dialects, and
+        // silently, as a wrong answer with HTTP 200 rather than an error.
+        //
+        // Counting result-set rows (not tuples) is deliberate: it is what setMaxRows itself
+        // capped, so this keeps the existing semantics where an enumerated target expands one
+        // row into several tuples. Only applied when a statement was actually executed, for the
+        // same reason -- the hint never constrained the partial-result path.
+        if ( execQuery && maxRows > 0 && rowsRead >= maxRows ) {
+          break;
+        }
+        rowsRead++;
 
         if ( enumTargetCount == 0 ) {
           int column = 0;
