@@ -489,7 +489,25 @@ public class MondrianServerImpl
         }
     }
 
-    public List<Statement> getStatements(String sessionId) {
+    /**
+     * The open statements of a session, or of every session when
+     * {@code sessionId} is null.
+     *
+     * <p>Synchronized on the same monitor as {@link #addStatement} and
+     * {@link #removeStatement}, the two methods that mutate
+     * {@code statementMap} -- which is a plain {@code HashMap}. Without this,
+     * iterating {@code values()} threw {@code ConcurrentModificationException}
+     * as soon as another request opened or closed a statement mid-iteration,
+     * and the damage was not confined to this call: the caller on the response
+     * path is {@code Session.close} from {@code XmlaServlet.doPost}, which runs
+     * <em>after</em> the SOAP response has been written, so the exception
+     * reached doPost's outer catch, which marshalled a SOAP fault onto the
+     * already-sent body. The client then received two concatenated documents
+     * and reported "a text/xml declaration may occur only at the very
+     * beginning of input". Reproduced at roughly 1 response in 40 with 13
+     * concurrent Execute requests, 2026-10-09.</p>
+     */
+    synchronized public List<Statement> getStatements(String sessionId) {
         List<Statement> result = new ArrayList<Statement>();
         for(Statement statement: statementMap.values()) {
             if(sessionId == null

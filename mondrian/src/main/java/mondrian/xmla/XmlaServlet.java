@@ -377,24 +377,58 @@ public abstract class XmlaServlet
                 marshallSoapMessage(response, responseSoapParts, mimeType);
             } catch (XmlaException xex) {
                 LOGGER.error("Errors when handling XML/A message", xex);
-                handleFault(response, responseSoapParts, phase, xex);
-                phase = Phase.SEND_ERROR;
-                marshallSoapMessage(response, responseSoapParts, mimeType);
+                // Same rule as the outer catch below: a fault can only be sent while nothing
+                // has been. marshallSoapMessage can throw after writing part of the body, and
+                // appending a fault to that would produce a body no client can parse.
+                if (response.isCommitted()) {
+                    LOGGER.error(
+                        "XML/A response was already committed; the error above is logged only, "
+                        + "not sent");
+                } else {
+                    handleFault(response, responseSoapParts, phase, xex);
+                    phase = Phase.SEND_ERROR;
+                    marshallSoapMessage(response, responseSoapParts, mimeType);
+                }
             }
 
-            String sessionId = (String)context.get(CONTEXT_XMLA_SESSION_ID);
-            if(sessionId != null) {
-                if(((String)context.get(CONTEXT_XMLA_SESSION_STATE)).equals(CONTEXT_XMLA_SESSION_STATE_END)) {
-                    mondrian.server.Session.close(sessionId);
+            // Session bookkeeping runs after the response has been written, so it must not be
+            // able to fail the request: there is no way to report an error to a client whose
+            // body is already on the wire, and trying to do so corrupts it. A
+            // ConcurrentModificationException from Session.close used to escape here and reach
+            // the outer catch below, which appended a SOAP fault to the finished response -- the
+            // client then saw two concatenated documents and reported "a text/xml declaration
+            // may occur only at the very beginning of input" (2026-10-09; the race itself is
+            // fixed in MondrianServerImpl.getStatements).
+            try {
+                String sessionId = (String)context.get(CONTEXT_XMLA_SESSION_ID);
+                if(sessionId != null) {
+                    if(CONTEXT_XMLA_SESSION_STATE_END.equals(
+                            context.get(CONTEXT_XMLA_SESSION_STATE))) {
+                        mondrian.server.Session.close(sessionId);
+                    }
+                    else {
+                        mondrian.server.Session.checkIn(sessionId);
+                    }
                 }
-                else {
-                    mondrian.server.Session.checkIn(sessionId);
-                }
+            } catch (Throwable t) {
+                LOGGER.error(
+                    "Error in XML/A session bookkeeping after the response was sent; the "
+                    + "response itself is unaffected", t);
             }
         } catch (Throwable t) {
             LOGGER.error("Unknown Error when handling XML/A message", t);
-            handleFault(response, responseSoapParts, phase, t);
-            marshallSoapMessage(response, responseSoapParts, mimeType);
+            // Only report a fault if nothing has been sent yet. Once the response is committed,
+            // marshalling a second document appends it to the first, which turns a server-side
+            // problem into an unparseable body at the client -- a failure that looks like
+            // anything but what it is, because the queries themselves succeeded.
+            if (response.isCommitted()) {
+                LOGGER.error(
+                    "XML/A response was already committed; the fault above is logged only, not "
+                    + "sent, so the response on the wire stays well formed");
+            } else {
+                handleFault(response, responseSoapParts, phase, t);
+                marshallSoapMessage(response, responseSoapParts, mimeType);
+            }
         }
     }
 
