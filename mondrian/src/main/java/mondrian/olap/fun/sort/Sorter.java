@@ -619,6 +619,20 @@ public class Sorter {
       return -1; // null == -infinity
     } else if ( value1 == Util.nullValue ) {
       return 1; // null == -infinity
+    } else if ( value0 == RolapUtil.sqlNullValue ) {
+      // A null member key. It arrives as RolapUtil's own sentinel, not as null and not as
+      // Util.nullValue (which is a Double), so neither check above catches it. Sorts with the
+      // nulls, below everything else.
+      //
+      // Without this, the dispatch below took the String branch for the other operand and the
+      // cast of the sentinel to String threw ClassCastException: any client sorting members by
+      // a key column that contains NULLs got a failed query. That is exactly what a Power BI
+      // slicer does - Properties("Key") inside an Order() - while an attribute with no NULLs in
+      // the same cube worked, which made it look like bad data rather than a comparator that
+      // cannot handle a legitimate star-schema null (2026-10-09).
+      return -1;
+    } else if ( value1 == RolapUtil.sqlNullValue ) {
+      return 1;
     } else if ( value0 instanceof String ) {
       return ( (String) value0 ).compareToIgnoreCase( (String) value1 );
     } else if ( value0 instanceof Number ) {
