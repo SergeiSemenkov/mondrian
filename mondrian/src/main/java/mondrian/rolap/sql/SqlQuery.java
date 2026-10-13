@@ -541,6 +541,25 @@ public class SqlQuery {
         return columnAliases.get(expression);
     }
 
+    /**
+     * Whether this query's FROM clause already contains a table under the
+     * given alias.
+     *
+     * <p>Asked by a predicate builder that has a choice of columns and must
+     * only name one that this query actually selects from -- see
+     * {@link mondrian.rolap.SqlConstraintUtils}' use of a star column's
+     * fact-table expression. A WHERE clause naming a table the FROM clause
+     * does not have is not a Mondrian-level error: it generates SQL the
+     * database rejects, which surfaces as a driver error with no hint about
+     * where it came from.
+     *
+     * @param alias table alias to look for; null is never present
+     * @return whether the FROM clause has a table under that alias
+     */
+    public boolean hasFromAlias(String alias) {
+        return alias != null && fromAliases.contains(alias);
+    }
+
     public void addWhere(
         final String exprLeft,
         final String exprMid,

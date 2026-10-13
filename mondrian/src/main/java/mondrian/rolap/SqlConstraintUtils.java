@@ -430,7 +430,7 @@ public class SqlConstraintUtils {
           return column.getStar();
         }
       };
-    } else if ( column.getFactColumnExpression() != null ) {
+    } else if ( factColumnUsable( column, sqlQuery ) ) {
       // A schema-declared AttributeMapping lets us skip the join to
       // column's own dimension table entirely: the fact table already
       // carries an equal-valued column. See RolapStar.Column's
@@ -460,6 +460,55 @@ public class SqlConstraintUtils {
   }
 
   /**
+   * Whether a star column's {@code AttributeMapping} fact-table expression may be used as the
+   * predicate column in this particular query.
+   *
+   * <p>The shortcut is only sound when the query being built actually selects from the fact
+   * table. {@link RolapStar.Column#getFactColumnExpression()} names a column on the fact table,
+   * which is a win for a cell request or a native set query -- it saves joining the dimension
+   * table to constrain on a column the fact table already carries -- and is nonsense for a query
+   * over the dimension table alone, where it produces a WHERE clause naming a table that is not
+   * in the FROM clause. That SQL is not rejected by Mondrian; it is handed to the database, which
+   * fails with its own error ({@code Code: 81} on ClickHouse, "Unknown column" elsewhere) and no
+   * indication of which MDX caused it.
+   *
+   * <p>What made this reachable: a dimension whose levels have {@code AttributeMapping}s, queried
+   * with {@code NON EMPTY Descendants([Time].[2025], [Time].[Month])}. Expanding descendants
+   * builds a {@link DescendantsConstraint} over the four quarters of 2025 and asks
+   * {@link SqlMemberSource#getMembersInLevel} for the months -- a dimension-only member query --
+   * and the constraint then rendered {@code fact.Quarter in (1, 2, 3, 4) and fact.Year = 2025}
+   * against a FROM clause holding nothing but the time dimension view. The same query without
+   * {@code NON EMPTY} is a different code path and worked, which is what made it look like a
+   * native-evaluation bug rather than a predicate-column one.
+   *
+   * <p>Checking the FROM clause is reliable here rather than merely convenient, because of the
+   * order {@link SqlTupleReader#makeLevelMembersSql} works in: a constraint that requires the
+   * join adds the fact table to FROM <em>before</em> the constraint is added (and says so --
+   * "Add constraints at first to ensure that level tables are added last"), while a constraint
+   * that does not require it never adds the fact table at all. So by the time a predicate asks
+   * this question, the answer is already final.
+   *
+   * @return true when the column has a fact-table expression and that table is in the FROM clause
+   */
+  private static boolean factColumnUsable( RolapStar.Column column, SqlQuery sqlQuery ) {
+    final MondrianDef.Expression factExpr = column.getFactColumnExpression();
+    if ( factExpr == null ) {
+      return false;
+    }
+    String alias = factExpr.getTableAlias();
+    if ( alias == null ) {
+      // An expression that names no single table (a view-style <SQL> snippet): fall back to the
+      // star's own fact table, and if that cannot be established either, do not take the
+      // shortcut. Being slower than necessary is recoverable; emitting invalid SQL is not.
+      final RolapStar star = column.getStar();
+      alias = star == null || star.getFactTable() == null
+        ? null
+        : star.getFactTable().getAlias();
+    }
+    return sqlQuery.hasFromAlias( alias );
+  }
+
+  /**
    * Get the column expression from the AggStar if provided or the regular table if not, and ensure table is in From
    */
   public static String getColumnExpr( SqlQuery sqlQuery, AggStar aggStar, RolapStar.Column column ) {
@@ -470,7 +519,7 @@ public class SqlConstraintUtils {
       AggStar.Table table = aggColumn.getTable();
       table.addToFrom( sqlQuery, false, true );
       expr = aggColumn.generateExprString( sqlQuery );
-    } else if ( column.getFactColumnExpression() != null ) {
+    } else if ( factColumnUsable( column, sqlQuery ) ) {
       expr = column.getFactColumnExpression().getExpression( sqlQuery );
     } else {
       RolapStar.Table table = column.getTable();
@@ -1400,7 +1449,7 @@ public class SqlConstraintUtils {
         }
 
         columnString = aggColumn.generateExprString( query );
-      } else if ( column.getFactColumnExpression() != null ) {
+      } else if ( factColumnUsable( column, query ) ) {
         columnString = column.getFactColumnExpression().getExpression( query );
       } else {
         columnString = column.generateExprString( query );
@@ -1682,7 +1731,7 @@ public class SqlConstraintUtils {
         AggStar.Table table = aggColumn.getTable();
         table.addToFrom( sqlQuery, false, true );
         columnString = aggColumn.generateExprString( sqlQuery );
-      } else if ( column.getFactColumnExpression() != null ) {
+      } else if ( factColumnUsable( column, sqlQuery ) ) {
         columnString = column.getFactColumnExpression().getExpression( sqlQuery );
       } else {
         RolapStar.Table targetTable = column.getTable();
@@ -1830,7 +1879,7 @@ public class SqlConstraintUtils {
           AggStar.Table table = aggColumn.getTable();
           table.addToFrom( sqlQuery, false, true );
           q = aggColumn.generateExprString( sqlQuery );
-        } else if ( column.getFactColumnExpression() != null ) {
+        } else if ( factColumnUsable( column, sqlQuery ) ) {
           q = column.getFactColumnExpression().getExpression( sqlQuery );
         } else {
           RolapStar.Table targetTable = column.getTable();
