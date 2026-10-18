@@ -447,10 +447,17 @@ public abstract class DefaultXmlaServlet extends XmlaServlet {
         }
 
 
-        // Generate a pseudo-random new session ID.
-        return Long.toString(
-            17L * System.nanoTime()
-            + 3L * System.currentTimeMillis(), 35);
+        // A random UUID, not a clock reading. This used to be
+        // 17 * nanoTime + 3 * currentTimeMillis in base 35, which two requests
+        // arriving in the same clock tick get identically: Power BI Desktop
+        // opens a BeginSession per visual when it refreshes a page, in
+        // parallel, and on 2026-10-18 two of them were handed the same id. The
+        // second Session.create was refused ("Session with id ... already
+        // exists" -- putIfAbsent correctly will not let one session replace
+        // another), and one visual on the page failed with an
+        // OpenConnectionError while the other five rendered. An id has to be
+        // unique; a timestamp is only usually so.
+        return java.util.UUID.randomUUID().toString().replace("-", "");
     }
 
 
