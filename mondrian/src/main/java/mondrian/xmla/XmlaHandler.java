@@ -3252,7 +3252,6 @@ public class XmlaHandler {
                 dimensionCount +=
                     axis.getPositions().get(0).getMembers().size();
             }
-            this.empty = empty;
 
             // Build a list of the lowest level used on each non-COLUMNS axis.
             Level[] levels = new Level[dimensionCount];
@@ -3309,7 +3308,23 @@ public class XmlaHandler {
             this.members = new Member[memberOrdinal + 1];
 
             // Deduce the list of column headings.
-            if (axes.size() > 0) {
+            if (axes.size() > 0
+                && axes.get(0).getPositions().isEmpty())
+            {
+                // No positions on COLUMNS: an empty slicer, or a filter that left nothing. The
+                // rowset is empty, but its schema is not -- a client that asked for these columns
+                // still has to be told what they are. Power BI reads the column list before the
+                // rows and fails on a missing one ("Failed to get the ordinal of column ... Column
+                // count: 0"), where zero rows are fine. So the headings come from the COLUMNS
+                // expression itself when it is a plain list of members, which is what the DAX
+                // compiler always writes.
+                empty = true;
+                for (String name : declaredColumnNames(query)) {
+                    columnHandlerList.add(
+                        new CellColumnHandler(
+                            query.columnAliases.getOrDefault(name, name)));
+                }
+            } else if (axes.size() > 0) {
                 CellSetAxis columnsAxis = axes.get(0);
                 for (Position position : columnsAxis.getPositions()) {
                     String name = null;
@@ -3331,6 +3346,36 @@ public class XmlaHandler {
             this.columnHandlers =
                 columnHandlerList.toArray(
                     new ColumnHandler[columnHandlerList.size()]);
+            this.empty = empty;
+        }
+
+        /**
+         * The unique names of the members a query's COLUMNS axis lists, when that axis is a plain
+         * set of members ({@code {[Measures].[a], [Measures].[b]}}); otherwise none, because the
+         * columns of any other expression are not known until it is evaluated.
+         */
+        private static List<String> declaredColumnNames(Query query) {
+            List<String> names = new ArrayList<String>();
+            if (query == null || query.getAxes().length == 0) {
+                return names;
+            }
+            mondrian.olap.Exp set = query.getAxes()[0].getSet();
+            mondrian.olap.Exp[] items;
+            if (set instanceof mondrian.mdx.ResolvedFunCall
+                && "{}".equals(((mondrian.mdx.ResolvedFunCall) set).getFunName()))
+            {
+                items = ((mondrian.mdx.ResolvedFunCall) set).getArgs();
+            } else {
+                items = new mondrian.olap.Exp[] {set};
+            }
+            for (mondrian.olap.Exp item : items) {
+                if (!(item instanceof mondrian.mdx.MemberExpr)) {
+                    return new ArrayList<String>();
+                }
+                names.add(
+                    ((mondrian.mdx.MemberExpr) item).getMember().getUniqueName());
+            }
+            return names;
         }
 
         public void metadata(SaxWriter writer) {

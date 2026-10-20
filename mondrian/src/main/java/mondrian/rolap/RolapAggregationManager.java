@@ -370,7 +370,10 @@ public abstract class RolapAggregationManager {
 
         } else {
             for (int i = 1; i < members.length; i++) {
-                if(members[i].isNull()) {
+                // The empty-slicer null member, but not a compound slicer's placeholder, which wraps
+                // a null member too (see RolapResult.hasEmptySlicerMember).
+                if(members[i].isNull()
+                    && !(members[i] instanceof RolapResult.CompoundSlicerRolapMember)) {
                     return null;
                 }
                 if (!(members[i] instanceof RolapCubeMember)) {

@@ -878,10 +878,8 @@ public class RolapResult extends ResultBase {
       AxisMemberList axisMembers ) {
 
     // If evaluator contains Null member - return;
-    for(Member member: evaluator.getMembers()) {
-      if(member.isNull()) {
-        return;
-      }
+    if ( hasEmptySlicerMember( evaluator ) ) {
+      return;
     }
 
     int attempt = 0;
@@ -932,16 +930,35 @@ public class RolapResult extends ResultBase {
     }
   }
 
+  /**
+   * Whether the evaluator's context holds the null member that stands for a slicer which evaluated
+   * to the empty set ("Empty Set in Slicer"): then every axis is empty and no cell is computed.
+   *
+   * <p>A {@link CompoundSlicerRolapMember} is not that, although it answers {@code isNull()} with
+   * true: it is the placeholder for a slicer of <em>more than one</em> tuple, and it wraps the
+   * hierarchy's null member only because it needs some member of that hierarchy to stand on (see
+   * {@link #setPlaceholderSlicerAxis}). Counting it as an empty slicer emptied every axis of every
+   * query with a compound slicer -- {@code WHERE {[Store].[USA].[CA], [Store].[USA].[WA]}} returned
+   * no columns and no rows -- which is how a Power BI cross-highlight from a Top N visual came back
+   * as a rowset with no columns at all (FM4).
+   */
+  static boolean hasEmptySlicerMember( Evaluator evaluator ) {
+    for ( Member member : evaluator.getMembers() ) {
+      if ( member.isNull() && !( member instanceof CompoundSlicerRolapMember ) ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   TupleIterable evalExecute( List<List<Member>> nonAllMembers, int cnt, RolapEvaluator evaluator, QueryAxis queryAxis,
       Calc calc ) {
     final int arity = calc == null ? 0 : calc.getType().getArity();
 
     // If evaluator contains Null member - return empty list;
-    for(Member member: evaluator.getMembers()) {
-      if(member.isNull()) {
-        TupleList axisResult = TupleCollections.emptyList( arity );
-        return axisResult;
-      }
+    if ( hasEmptySlicerMember( evaluator ) ) {
+      TupleList axisResult = TupleCollections.emptyList( arity );
+      return axisResult;
     }
 
     final int savepoint = evaluator.savepoint();
