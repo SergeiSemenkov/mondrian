@@ -338,11 +338,38 @@ public class SqlContextConstraint
         AggStar aggStar,
         RolapLevel level)
     {
-        if (!isJoinRequired()) {
+        if (!isJoinRequired() && !factTableInFrom(sqlQuery, baseCube, aggStar, level)) {
             return;
         }
         SqlConstraintUtils.joinLevelTableToFactTable(
             sqlQuery, baseCube, aggStar, evaluator, (RolapCubeLevel)level);
+    }
+
+    /**
+     * Whether the fact table is already in the FROM clause. The context alone
+     * may not require the join while addMemberConstraint, which sets the parent
+     * into the context, has added the fact table; a parent level with an
+     * AttributeMapping is then constrained on the fact column, so nothing
+     * joins the level's own table. Left unjoined, that table and the fact
+     * table form a cartesian product: NON EMPTY Descendants([Time].[2003],
+     * [Time].[Month]) on OnTime read the quarters of 2003 as every quarter in
+     * the time view times every 2003 flight, in 3.3 s.
+     */
+    private static boolean factTableInFrom(
+        SqlQuery sqlQuery,
+        RolapCube baseCube,
+        AggStar aggStar,
+        RolapLevel level)
+    {
+        if (aggStar != null) {
+            return false;
+        }
+        final RolapStar.Column column =
+            ((RolapCubeLevel) level).getBaseStarKeyColumn(baseCube);
+        return column != null
+            && column.getStar().getFactTable() != null
+            && sqlQuery.hasFromAlias(
+                column.getStar().getFactTable().getAlias());
     }
 
     public MemberChildrenConstraint getMemberChildrenConstraint(

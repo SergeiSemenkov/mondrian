@@ -166,11 +166,11 @@ abstract class MondrianOlap4jStatement
                     true,
                     null,
                     rowCountSlot);
-            SqlStatement.DrillThroughResults.put(resultSet.getStatement(), rolapDrillThroughAction);
             if (resultSet == null) {
                 throw new OlapException(
                     "Cannot do DrillThrough operation on the cell");
             }
+            SqlStatement.DrillThroughResults.put(resultSet.getStatement(), rolapDrillThroughAction);
             return resultSet;
         } else if (parseTree instanceof Explain) {
             String plan = explainInternal(((Explain) parseTree).getQuery());

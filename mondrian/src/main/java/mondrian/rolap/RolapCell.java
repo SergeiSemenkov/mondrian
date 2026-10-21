@@ -135,10 +135,10 @@ public class RolapCell implements Cell {
             RolapAggregationManager.makeDrillThroughRequest(
                 currentMembers, extendedContext, result.getCube(),
                 fields);
-        cellRequest.setMaxRowCount(maxRowCount);
         if (cellRequest == null) {
             return null;
         }
+        cellRequest.setMaxRowCount(maxRowCount);
         final RolapConnection connection =
             result.getExecution().getMondrianStatement()
                 .getMondrianConnection();
@@ -252,6 +252,118 @@ public class RolapCell implements Cell {
         Member[] membersForDrillthrough,
         Axis slicerAxis)
     {
+        final List<StarPredicate> predicates = new ArrayList<StarPredicate>();
+        // A member Aggregate({m1, m2, ...}) stands for the rows of any of its
+        // members: un-constrain its hierarchy and OR the members instead, the
+        // same as a set in the slicer
+        for (int i = 0; i < membersForDrillthrough.length; i++) {
+            final List<Member> members =
+                aggregatedMembers(membersForDrillthrough[i]);
+            if (members == null) {
+                continue;
+            }
+            membersForDrillthrough[i] =
+                membersForDrillthrough[i].getHierarchy().getAllMember();
+            final List<StarPredicate> anyOf = new ArrayList<StarPredicate>();
+            for (Member member : members) {
+                anyOf.add(new AndPredicate(memberPredicates(member)));
+            }
+            predicates.add(new OrPredicate(anyOf));
+        }
+        final StarPredicate compoundSlicer =
+            buildCompoundSlicerPredicate(membersForDrillthrough, slicerAxis);
+        if (compoundSlicer != null) {
+            predicates.add(compoundSlicer);
+        }
+        if (predicates.isEmpty()) {
+            return null;
+        }
+        return predicates.size() == 1
+            ? predicates.get(0)
+            : new AndPredicate(predicates);
+    }
+
+    /**
+     * Returns the members a calculated member stands for when it is
+     * {@code Aggregate({m1, m2, ...})} over stored members of its own
+     * hierarchy, the shape clients build for a multi-member filter; null for
+     * any other member.
+     */
+    static List<Member> aggregatedMembers(Member member) {
+        if (!member.isCalculated() || member.isMeasure()) {
+            return null;
+        }
+        final Exp expr =
+            RolapUtil.strip((RolapMember) member).getExpression();
+        if (!(expr instanceof ResolvedFunCall)) {
+            return null;
+        }
+        final ResolvedFunCall call = (ResolvedFunCall) expr;
+        if (!(call.getFunDef() instanceof AggregateFunDef)
+            || call.getArgCount() != 1
+            || !(call.getArg(0) instanceof ResolvedFunCall))
+        {
+            return null;
+        }
+        final ResolvedFunCall set = (ResolvedFunCall) call.getArg(0);
+        if (!(set.getFunDef() instanceof SetFunDef)
+            || set.getArgCount() < 2)
+        {
+            return null;
+        }
+        final List<Member> members = new ArrayList<Member>();
+        for (Exp arg : set.getArgs()) {
+            if (!(arg instanceof MemberExpr)) {
+                return null;
+            }
+            final Member m = ((MemberExpr) arg).getMember();
+            if (m.isCalculated() || m.isAll()
+                || !(m instanceof RolapCubeMember)
+                || !m.getHierarchy().equals(member.getHierarchy()))
+            {
+                return null;
+            }
+            members.add(m);
+        }
+        return members;
+    }
+
+    /**
+     * Returns a predicate per level from the member up to the All member.
+     */
+    private List<StarPredicate> memberPredicates(Member member) {
+        final List<StarPredicate> predicates = new ArrayList<StarPredicate>();
+        Member memberWalk = member;
+        Level levelLast = null;
+        while (memberWalk != null && ! memberWalk.isAll()) {
+            // Only create a predicate for this member if we
+            // are at a new level. This is for parent-child levels,
+            // however it still suffers from the following bug:
+            //  http://jira.pentaho.com/browse/MONDRIAN-318
+            if (memberWalk.getLevel() != levelLast) {
+                RolapCubeMember rolapCubeMember =
+                    (RolapCubeMember) memberWalk;
+                RolapStar.Column column =
+                    rolapCubeMember.getLevel()
+                        .getBaseStarKeyColumn(
+                            getDrillThroughBaseCube());
+                // Add a predicate for the member at this level
+                predicates.add(
+                    new MemberColumnPredicate(
+                        column,
+                        rolapCubeMember));
+            }
+            levelLast = memberWalk.getLevel();
+            // Walk up the hierarchy
+            memberWalk = memberWalk.getParentMember();
+        }
+        return predicates;
+    }
+
+    private StarPredicate buildCompoundSlicerPredicate(
+        Member[] membersForDrillthrough,
+        Axis slicerAxis)
+    {
         List<Position> listOfPositions = slicerAxis.getPositions();
         // If the slicer has zero or one position(s),
         // then there is no need to do
@@ -300,31 +412,11 @@ public class RolapCell implements Cell {
                 if (!membersForDrillthrough[rolapHierarchy.getOrdinalInCube()]
                    .equals(member))
                 {
-                    // Walk up the member's hierarchy, adding a
-                    // predicate for each level
-                    Member memberWalk = member;
-                    Level levelLast = null;
-                    while (memberWalk != null && ! memberWalk.isAll()) {
-                        // Only create a predicate for this member if we
-                        // are at a new level. This is for parent-child levels,
-                        // however it still suffers from the following bug:
-                        //  http://jira.pentaho.com/browse/MONDRIAN-318
-                        if (memberWalk.getLevel() != levelLast) {
-                            RolapCubeMember rolapCubeMember =
-                                (RolapCubeMember) memberWalk;
-                            RolapStar.Column column =
-                                rolapCubeMember.getLevel()
-                                    .getBaseStarKeyColumn(
-                                        getDrillThroughBaseCube());
-                            // Add a predicate for the member at this level
-                            listOfStarPredicatesForCurrentPosition.add(
-                                new MemberColumnPredicate(
-                                    column,
-                                    rolapCubeMember));
-                        }
-                        levelLast = memberWalk.getLevel();
-                        // Walk up the hierarchy
-                        memberWalk = memberWalk.getParentMember();
+                    // An Aggregate member was replaced by its own predicate
+                    // in buildDrillthroughSlicerPredicate
+                    if (aggregatedMembers(member) == null) {
+                        listOfStarPredicatesForCurrentPosition.addAll(
+                            memberPredicates(member));
                     }
                 }
             }
@@ -387,7 +479,9 @@ public class RolapCell implements Cell {
         // are from the same cube.
         for (int i = 1; i < currentMembers.length; i++) {
             final Member currentMember = currentMembers[i];
-            if (currentMember.isCalculated()) {
+            if (currentMember.isCalculated()
+                && aggregatedMembers(currentMember) == null)
+            {
                 return true;
             }
         }
