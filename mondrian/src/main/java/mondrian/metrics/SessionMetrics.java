@@ -10,6 +10,7 @@
 
 package mondrian.metrics;
 
+import io.prometheus.client.Counter;
 import io.prometheus.client.Gauge;
 
 public class SessionMetrics {
@@ -19,7 +20,18 @@ public class SessionMetrics {
             .help("Current number of active sessions")
             .register();
 
+    // Sessions clients opened with BeginSession since start: rate() of this is how many sessions
+    // clients begin, where the gauge above only shows how many are open at the moment of a scrape.
+    private static final Counter sessionsOpened = Counter.build()
+            .name("emondrian_sessions_opened_total")
+            .help("XML/A sessions opened with BeginSession since the server started")
+            .register();
+
     public static void setSessionCount(int currentCount) {
         sessionCount.set(currentCount);
+    }
+
+    public static void sessionOpened() {
+        sessionsOpened.inc();
     }
 }

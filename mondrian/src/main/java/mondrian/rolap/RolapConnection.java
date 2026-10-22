@@ -710,8 +710,17 @@ public class RolapConnection extends ConnectionBase {
         System.gc();
       }
 
+      // Timeouts and cancels are ResultLimitExceededExceptions too, so they arrive here.
+      MdxMetrics.mdxFailed.labels(
+        catalogName, cubeName, userId,
+        e instanceof mondrian.olap.QueryTimeoutException
+          || e instanceof mondrian.olap.QueryCanceledException
+          ? "timeout_or_cancel" : "limit").inc();
       throw e;
     } catch ( Exception e ) {
+      MdxMetrics.mdxFailed.labels(
+        catalogName, cubeName, userId,
+        execution.isCancelOrTimeout() ? "timeout_or_cancel" : "error").inc();
       try {
         if ( !execution.isCancelOrTimeout() ) {
           statement.end( execution );
@@ -736,7 +745,9 @@ public class RolapConnection extends ConnectionBase {
       mm.removeListener( listener );
       final long elapsed = execution.getElapsedMillis();
       MdxMetrics.mdxCompleted.labels(catalogName, cubeName, userId).inc();
-      MdxMetrics.mdxExecutionTimeSum.labels(catalogName, cubeName, userId).inc(elapsed / 1000);
+      // 1000.0, not 1000: long division truncated every query under a second to 0.
+      MdxMetrics.mdxExecutionTimeSum.labels(catalogName, cubeName, userId).inc(elapsed / 1000.0);
+      MdxMetrics.mdxDuration.labels(catalogName).observe(elapsed / 1000.0);
       if ( RolapUtil.MDX_LOGGER.isDebugEnabled() ) {
         RolapUtil.MDX_LOGGER.debug(
           currId + ": exec: " + elapsed + " ms" );

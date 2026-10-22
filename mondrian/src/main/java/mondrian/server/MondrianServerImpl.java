@@ -11,7 +11,6 @@
 */
 package mondrian.server;
 
-//import mondrian.metrics.ConnectionMetrics;
 import mondrian.olap.MondrianException;
 import mondrian.olap.MondrianServer;
 import mondrian.olap4j.*;
@@ -349,9 +348,6 @@ public class MondrianServerImpl
         connectionMap.put(
             connection.getId(),
             connection);
-
-//        ConnectionMetrics.incConnection(connection.getUserId(), connection.getCatalogName());
-
         monitor.sendEvent(
             new ConnectionStartEvent(
                 System.currentTimeMillis(),
@@ -372,9 +368,6 @@ public class MondrianServerImpl
             throw new MondrianException("Server already shutdown.");
         }
         connectionMap.remove(connection.getId());
-
-//        ConnectionMetrics.decConnection(connection.getUserId(), connection.getCatalogName());
-
         monitor.sendEvent(
             new ConnectionEndEvent(
                 System.currentTimeMillis(),
@@ -521,6 +514,23 @@ public class MondrianServerImpl
             }
         }
         return result;
+    }
+
+    /**
+     * A snapshot of the open connections, for the activity metrics.
+     *
+     * <p>Locks the map while copying: it is a synchronizedMap, whose iterators
+     * are not safe against concurrent puts and removes otherwise. Its values
+     * are weak, so a connection dropped without close() leaves it on the next
+     * garbage collection -- which is why connections are counted from here at
+     * scrape time rather than by an increment in addConnection and a decrement
+     * in removeConnection: the decrement never runs for those, and that gauge
+     * only ever drifted upwards.</p>
+     */
+    public List<RolapConnection> getConnections() {
+        synchronized (connectionMap) {
+            return new ArrayList<RolapConnection>(connectionMap.values());
+        }
     }
 
     public Repository getRepository() {

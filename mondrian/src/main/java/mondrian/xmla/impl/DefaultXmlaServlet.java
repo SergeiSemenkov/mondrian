@@ -326,6 +326,10 @@ public abstract class DefaultXmlaServlet extends XmlaServlet {
                                 CONTEXT_XMLA_SESSION_STATE_BEGIN);
 
                         Session.create(sessionIdStr);
+                        // Counted here, not in Session.create: a request without a session
+                        // gets a session of its own below, for its lifetime only, and that
+                        // is not a session a client opened.
+                        mondrian.metrics.SessionMetrics.sessionOpened();
 
                     } else if (localName.equals(XMLA_SESSION)) {
                         sessionIdStr = getSessionIdFromRequest(e, context);

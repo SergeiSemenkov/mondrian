@@ -46,6 +46,7 @@ public class MetricsInitializer implements ServletContextListener {
             System.setProperty(HOTSPOT_EXPORTS_INITIALIZED_PROPERTY, "true");
         }
         ExecutionMetrics.updateMetrics();
+        ActivityCollector.install();
     }
     @Override
     public void contextDestroyed(ServletContextEvent sce) {
