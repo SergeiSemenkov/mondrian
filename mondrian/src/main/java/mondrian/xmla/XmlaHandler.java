@@ -2269,6 +2269,17 @@ public class XmlaHandler {
             put("BACK_COLOR", new CellProperty("BACK_COLOR", "BackColor", "xsd:unsignedInt"));
             put("FORE_COLOR", new CellProperty("FORE_COLOR", "ForeColor", "xsd:unsignedInt"));
             put("FONT_FLAGS", new CellProperty("FONT_FLAGS", "FontFlags", "xsd:int"));
+            // The rest of the cell properties SSAS knows. Excel asks for some of
+            // them (FONT_NAME, FONT_SIZE, ACTION_TYPE...), and a name missing here
+            // used to fail the whole query after it had run.
+            put("FONT_NAME", new CellProperty("FONT_NAME", "FontName", "xsd:string"));
+            put("FONT_SIZE", new CellProperty("FONT_SIZE", "FontSize", "xsd:unsignedShort"));
+            put("NON_EMPTY_BEHAVIOR", new CellProperty("NON_EMPTY_BEHAVIOR", "NonEmptyBehavior", "xsd:string"));
+            put("SOLVE_ORDER", new CellProperty("SOLVE_ORDER", "SolveOrder", "xsd:int"));
+            put("UPDATEABLE", new CellProperty("UPDATEABLE", "Updateable", "xsd:unsignedInt"));
+            put("VISIBLE", new CellProperty("VISIBLE", "Visible", "xsd:boolean"));
+            put("EXPRESSION", new CellProperty("EXPRESSION", "Expression", "xsd:string"));
+            put("ACTION_TYPE", new CellProperty("ACTION_TYPE", "ActionType", "xsd:unsignedInt"));
         }};
 
         protected static final List<Property> defaultProps =
@@ -2373,7 +2384,14 @@ public class XmlaHandler {
                 mondrian.olap.Property property = mondrian.olap.Property.lookup(cellProperty.toString(), matchCase);
                 String propertyName = ((mondrian.olap.Id.NameSegment)
                         mondrian.olap.Util.parseIdentifier(cellProperty.toString()).get(0)).name;
-                queryCellPropertyNames.add(propertyName);
+                // Like SSAS, ignore a cell property it has no element for
+                // (DATATYPE, a typo...) rather than fail the query.
+                String upperName = propertyName == null ? null : propertyName.toUpperCase();
+                if (cellPropertyMap.containsKey(upperName)
+                    && !queryCellPropertyNames.contains(upperName))
+                {
+                    queryCellPropertyNames.add(upperName);
+                }
             }
             if(queryCellPropertyNames.size() == 0) {
                 queryCellPropertyNames.add("VALUE");

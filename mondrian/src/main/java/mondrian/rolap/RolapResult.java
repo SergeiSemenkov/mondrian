@@ -631,7 +631,7 @@ public class RolapResult extends ResultBase {
 
       evaluator.restore( savepoint );
 
-      final int cellCountLimit = MondrianProperties.instance().ResultLimit.get();
+      final int cellCountLimit = evaluationCellLimit( query );
       if(cellCountLimit > 0) {
         long cellCount = 1;
         for(Axis axis: this.axes) {
@@ -824,6 +824,28 @@ public class RolapResult extends ResultBase {
       }
     }
     return false;
+  }
+
+  /**
+   * The most cells a query may evaluate. A query with a NON EMPTY axis
+   * evaluates every cell of its axes before the empty ones are removed, so it
+   * gets {@code mondrian.result.evaluationLimit} when that is set, and
+   * {@code mondrian.result.limit} is checked again on what NON EMPTY leaves
+   * ({@link RolapConnection#execute}).
+   */
+  static int evaluationCellLimit( Query query ) {
+    final MondrianProperties props = MondrianProperties.instance();
+    final int resultLimit = props.ResultLimit.get();
+    final int evaluationLimit = props.ResultEvaluationLimit.get();
+    if ( evaluationLimit <= 0 ) {
+      return resultLimit;
+    }
+    for ( QueryAxis axis : query.getAxes() ) {
+      if ( axis.isNonEmpty() ) {
+        return evaluationLimit;
+      }
+    }
+    return resultLimit;
   }
 
   public final Execution getExecution() {

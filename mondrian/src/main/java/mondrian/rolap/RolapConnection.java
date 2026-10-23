@@ -694,6 +694,7 @@ public class RolapConnection extends ConnectionBase {
           }
           ++i;
         }
+        checkReturnedCellLimit( query, result );
       } finally {
         Locus.pop( locus );
         ( (RolapCube) query.getCube() ).clearCachedAggregations( true );
@@ -752,6 +753,28 @@ public class RolapConnection extends ConnectionBase {
         RolapUtil.MDX_LOGGER.debug(
           currId + ": exec: " + elapsed + " ms" );
       }
+    }
+  }
+
+  /**
+   * With {@code mondrian.result.evaluationLimit} set, a NON EMPTY query was
+   * only held to that larger limit while it was evaluated; here
+   * {@code mondrian.result.limit} applies to the cells it actually returns.
+   */
+  private static void checkReturnedCellLimit( Query query, Result result ) {
+    final int limit = MondrianProperties.instance().ResultLimit.get();
+    if ( limit <= 0
+      || RolapResult.evaluationCellLimit( query ) == limit )
+    {
+      return; // RolapResult already held the query to mondrian.result.limit
+    }
+    long cellCount = 1;
+    for ( Axis axis : result.getAxes() ) {
+      cellCount *= axis.getPositions().size();
+    }
+    if ( cellCount > limit ) {
+      throw MondrianResource.instance().TotalCellsLimitExceeded.ex(
+        cellCount, limit );
     }
   }
 

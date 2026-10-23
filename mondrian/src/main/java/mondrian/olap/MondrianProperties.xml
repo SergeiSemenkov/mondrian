@@ -108,6 +108,21 @@ maximum size of a result set.
         <Default>0</Default>
     </PropertyDefinition>
     <PropertyDefinition>
+        <Name>ResultEvaluationLimit</Name>
+        <Path>mondrian.result.evaluationLimit</Path>
+        <Description>
+Integer property that, if set to a value greater than zero, limits the
+number of cells a query whose axes are NON EMPTY may evaluate before the
+empty rows and columns are removed. Every one of those cells is held in
+memory while the query runs, so this is the memory guard for such a query,
+and {@link #ResultLimit mondrian.result.limit} then applies to what is left
+after NON EMPTY. Zero (the default) uses mondrian.result.limit for both,
+which rejects a NON EMPTY query by the size it has before NON EMPTY.
+</Description>
+        <Type>int</Type>
+        <Default>0</Default>
+    </PropertyDefinition>
+    <PropertyDefinition>
         <Name>HighCardChunkSize</Name>
         <Path>mondrian.result.highCardChunkSize</Path>
         <Description>
