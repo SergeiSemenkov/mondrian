@@ -342,6 +342,7 @@ public class SchemaValidator {
         String dimensionName = attr(dimension, "name");
         String where = "Dimension '" + dimensionName + "'";
         checkUnknownAttributes(dimension, DIMENSION_ATTRS, where, findings);
+        validateTimeLevels(dimension, where, findings);
 
         List<Element> attributes = childrenNamed(dimension, "DimensionAttribute");
         if (attributes.isEmpty()) {
@@ -364,6 +365,74 @@ public class SchemaValidator {
         validateKeyAttribute(dimension, where, keyAttributes, findings);
         validateLevels(dimension, where, attributesByName, findings);
         validateAttributeMappings(dimension, where, attributesByName, findings);
+    }
+
+    /**
+     * The time rule {@code RolapLevel} and {@code RolapDimension} enforce when
+     * the schema loads, and which failed only there: a time dimension's levels
+     * must all be time-typed, and a time-typed level may only be in a time
+     * dimension. "Levels" includes the one-level hierarchy every attribute
+     * generates unless it sets {@code attributeHierarchyEnabled="false"} --
+     * the case that is easy to miss, since that hierarchy is not written out
+     * anywhere. Without {@code type}, the dimension takes its type from its
+     * first level, in the order {@code RolapDimension} builds them: explicit
+     * hierarchies, then attribute hierarchies.
+     */
+    private static void validateTimeLevels(
+        Element dimension, String where, List<Finding> findings)
+    {
+        List<String[]> levels = new ArrayList<>();
+        for (Element hierarchy : childrenNamed(dimension, "Hierarchy")) {
+            for (Element level : childrenNamed(hierarchy, "Level")) {
+                levels.add(new String[] {
+                    "level '" + attr(level, "name") + "'", attr(level, "levelType")});
+            }
+        }
+        for (Element attribute : childrenNamed(dimension, "DimensionAttribute")) {
+            if ("false".equals(attr(attribute, "attributeHierarchyEnabled"))) {
+                continue;
+            }
+            levels.add(new String[] {
+                "the hierarchy of attribute '" + attr(attribute, "name") + "'",
+                attr(attribute, "levelType")});
+        }
+        if (levels.isEmpty()) {
+            return;
+        }
+        String type = attr(dimension, "type");
+        boolean time;
+        String why;
+        if ("TimeDimension".equals(type)) {
+            time = true;
+            why = "the dimension is type='TimeDimension'";
+        } else if (!type.isEmpty()) {
+            time = false;
+            why = "the dimension is type='" + type + "'";
+        } else {
+            time = levels.get(0)[1].startsWith("Time");
+            why = "the dimension has no type, so its first level, "
+                + levels.get(0)[0] + ", made it a "
+                + (time ? "time" : "regular") + " dimension";
+        }
+        for (String[] level : levels) {
+            boolean levelTime = level[1].startsWith("Time");
+            if (time && !levelTime) {
+                findings.add(error(
+                    where + ", " + level[0] + " has levelType='"
+                    + (level[1].isEmpty() ? "Regular" : level[1]) + "', but " + why
+                    + ", so every level must be time-typed (TimeYears, TimeQuarters,"
+                    + " TimeMonths, TimeWeeks, TimeDays, ..., or TimeUndefined for one"
+                    + " that is not a period, such as a day of the week). The schema"
+                    + " will not load. For an attribute, set its levelType, or"
+                    + " attributeHierarchyEnabled='false' if it needs no hierarchy of"
+                    + " its own."));
+            } else if (!time && levelTime) {
+                findings.add(error(
+                    where + ", " + level[0] + " has levelType='" + level[1] + "', but "
+                    + why + ", and a time level is allowed only in a time dimension"
+                    + " (type='TimeDimension'). The schema will not load."));
+            }
+        }
     }
 
     /**
