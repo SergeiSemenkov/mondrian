@@ -104,6 +104,18 @@ public class Query extends QueryPart {
 
     private Subcube subcube;
 
+    /**
+     * {@link #getSubcubePredicates} per base cube. Building it resolves every
+     * member of the subcube's sets again, and it is asked for on every cell
+     * request: with an explicit set of a few thousand members (an Excel pivot
+     * filter) that made a query minutes long (emondrian-community#6). It
+     * depends only on the subcube, the base cube and the parameters, so it is
+     * kept for the query and dropped when a parameter changes. A failure is
+     * not kept, so it is thrown again on the next call.
+     */
+    private final Map<RolapCube, Optional<StarPredicate>> subcubePredicateCache =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
     private final Statement statement;
     public Calc[] axisCalcs;
     public Calc slicerCalc;
@@ -942,6 +954,8 @@ public class Query extends QueryPart {
             throw MondrianResource.instance().UnknownParameter.ex(
                 parameterName);
         }
+        // A subcube may refer to the parameter.
+        subcubePredicateCache.clear();
         if (!param.isModifiable()) {
             throw MondrianResource.instance().ParameterIsNotModifiable.ex(
                 parameterName, param.getScope().name());
@@ -2453,6 +2467,18 @@ public class Query extends QueryPart {
     public HashMap<String, String> columnAliases = new HashMap<>();
 
     public StarPredicate getSubcubePredicates(RolapCube baseCube) {
+        if (baseCube == null) {
+            return computeSubcubePredicates(null);
+        }
+        Optional<StarPredicate> known = subcubePredicateCache.get(baseCube);
+        if (known == null) {
+            known = Optional.ofNullable(computeSubcubePredicates(baseCube));
+            subcubePredicateCache.putIfAbsent(baseCube, known);
+        }
+        return known.orElse(null);
+    }
+
+    private StarPredicate computeSubcubePredicates(RolapCube baseCube) {
         List<StarPredicate> listOfSubcubeSets = new ArrayList<StarPredicate>();
 
         Subcube subcube = this.getSubcube();
