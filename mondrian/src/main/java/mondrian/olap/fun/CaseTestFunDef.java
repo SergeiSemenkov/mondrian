@@ -91,7 +91,9 @@ class CaseTestFunDef extends FunDefBase {
             Validator validator,
             List<Conversion> conversions)
         {
-            if (args.length < 1) {
+            // At least one WHEN ... THEN pair: "CASE ELSE x END" arrives here
+            // as a single argument, and args[1] below would be out of bounds.
+            if (args.length < 2) {
                 return null;
             }
             int j = 0;
