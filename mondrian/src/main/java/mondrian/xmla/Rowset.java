@@ -108,11 +108,23 @@ public abstract class Rowset implements XmlaConstants {
         for (Map.Entry<String, String> propertyEntry : properties.entrySet()) {
             String propertyName = propertyEntry.getKey();
             final PropertyDefinition propertyDef =
-                Util.lookup(PropertyDefinition.class, propertyName);
+                lookupProperty(propertyName);
             if (propertyDef == null) {
-                throw Util.newError(
-                    "Rowset '" + definition.name()
-                    + "' does not support property '" + propertyName + "'");
+                // Ignored, as Analysis Services ignores them: OLE DB and
+                // ADOMD.NET clients put whatever their connection string holds
+                // into the PropertyList, and faulting on one broke every Power
+                // BI report served through the on-premises gateway.
+                if (propertyName != null
+                    && REPORTED_UNKNOWN_PROPERTIES.size() < 200
+                    && REPORTED_UNKNOWN_PROPERTIES.add(
+                        propertyName.toLowerCase(Locale.ROOT)))
+                {
+                    LOGGER.info(
+                        "Ignoring unknown XML/A property '" + propertyName
+                        + "' (first seen on rowset '" + definition.name()
+                        + "'; reported once)");
+                }
+                continue;
             }
             final String propertyValue = propertyEntry.getValue();
             setProperty(propertyDef, propertyValue);
@@ -121,6 +133,23 @@ public abstract class Rowset implements XmlaConstants {
             }
         }
         this.deep = deep;
+    }
+
+    /** Unknown property names already logged, lower-cased. */
+    private static final Set<String> REPORTED_UNKNOWN_PROPERTIES =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** Looks up a property definition by name, ignoring case. */
+    static PropertyDefinition lookupProperty(String name) {
+        if (name == null) {
+            return null;
+        }
+        for (PropertyDefinition definition : PropertyDefinition.values()) {
+            if (definition.name().equalsIgnoreCase(name)) {
+                return definition;
+            }
+        }
+        return null;
     }
 
     protected ArrayList<RowsetDefinition.Column> pruneRestrictions(

@@ -385,7 +385,13 @@ public class DefaultXmlaRequest
     }
 
     private void initProperties(Element propertiesRoot) throws XmlaException {
-        Map<String, String> properties = new HashMap<String, String>();
+        // Case-insensitive, as Analysis Services treats property names: the
+        // OLE DB provider (MSOLAP, which the Power BI gateway queries through)
+        // sends its init properties in lower case, e.g. "sspropinitappname",
+        // and a case-sensitive EffectiveUserName lookup would silently run a
+        // trusted gateway's requests as the gateway itself.
+        Map<String, String> properties =
+            new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
         Element[] childElems =
             XmlaUtil.filterChildElements(
                 propertiesRoot,
@@ -569,7 +575,9 @@ public class DefaultXmlaRequest
     }
 
     public void setProperty(String key, String value) {
-        HashMap<String, String> newProperties = new HashMap<String, String>(this.properties);
+        Map<String, String> newProperties =
+            new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
+        newProperties.putAll(this.properties);
         newProperties.put(key, value);
         this.properties = Collections.unmodifiableMap(newProperties);
     }
