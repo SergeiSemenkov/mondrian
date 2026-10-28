@@ -1490,6 +1490,26 @@ public enum RowsetDefinition {
 
         writer.endElement(); // xsd:restriction
         writer.endElement(); // xsd:simpleType
+
+        // A column typed "xmlDocument" (DISCOVER_CSDL_METADATA's METADATA)
+        // needs the type declared here, as Analysis Services declares it: an
+        // element holding any XML. Undeclared, it was tolerated by Power BI
+        // Desktop but not by the on-premises gateway's ADOMD.NET, which loads
+        // the schema strictly and failed with "Type
+        // 'urn:schemas-microsoft-com:xml-analysis:rowset:xmlDocument' is not
+        // declared".
+        for (Column column : columnDefinitions) {
+            if (column.type == Type.XmlDocument) {
+                writer.startElement(
+                    "xsd:complexType",
+                    "name", Type.XmlDocument.columnType);
+                writer.startElement("xsd:sequence");
+                writer.element("xsd:any");
+                writer.endElement(); // xsd:sequence
+                writer.endElement(); // xsd:complexType
+                break;
+            }
+        }
     }
 
     protected void writeRowsetXmlSchemaRowDef(SaxWriter writer) {
