@@ -145,6 +145,12 @@ public abstract class Rowset implements XmlaConstants {
             break;
         case Catalog:
             break;
+        case EffectiveUserName:
+        case Roles:
+        case CustomData:
+            // Identity, not rowset, properties: XmlaHandler reads them from
+            // the request. Not logged -- EffectiveUserName names a person.
+            return;
         case LocaleIdentifier:
             Locale locale = XmlaUtil.convertToLocale( value );
             if(locale != null) {

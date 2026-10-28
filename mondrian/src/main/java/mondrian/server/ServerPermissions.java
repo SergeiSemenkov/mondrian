@@ -88,7 +88,15 @@ public class ServerPermissions {
         DATABASE_READ("database", false, "read", "manage"),
         DATABASE_MANAGE("database", false, "manage"),
         LOGS_READ("logs", false, "read"),
-        LICENSE_MANAGE("license", false, "manage");
+        LICENSE_MANAGE("license", false, "manage"),
+        /**
+         * Running a request as another user, named by the XML/A
+         * {@code EffectiveUserName} property -- what the Power BI on-premises
+         * gateway does for every viewer. Unlike the other server-wide
+         * capabilities it is never granted by default: see
+         * {@link #mayImpersonate}.
+         */
+        IMPERSONATE("impersonate", false, "allow");
 
         private final String attribute;
         private final boolean catalogScoped;
@@ -303,7 +311,8 @@ public class ServerPermissions {
     private static final String MEMBERS_SUFFIX = "members";
 
     private static final Set<String> KNOWN_SUFFIXES = Set.of(
-        MEMBERS_SUFFIX, "schema", "database", "logs", "license");
+        MEMBERS_SUFFIX, "schema", "database", "logs", "license",
+        "impersonate");
 
     /**
      * Keys already reported as malformed. A permission check runs per request,
@@ -475,6 +484,21 @@ public class ServerPermissions {
         Capability capability)
     {
         return decideAtServerLevel(identity, capability) != Decision.DENIED;
+    }
+
+    /**
+     * Whether {@code identity} may run requests as another user.
+     *
+     * <p>Stricter than {@link #isGrantedAtServerLevel}: only an explicit
+     * {@code mondrian.security.role.<role>.impersonate=allow} on a role the
+     * caller matches grants it. A server with no security configured -- the
+     * open Community setup -- grants every other capability to everyone, but
+     * granting this one would let any anonymous caller name any user,
+     * {@code admin} included, and take over that user's rights.</p>
+     */
+    public static boolean mayImpersonate(Identity identity) {
+        return decideAtServerLevel(identity, Capability.IMPERSONATE)
+            == Decision.GRANTED;
     }
 
     // -----------------------------------------------------------------------

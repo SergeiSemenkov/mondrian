@@ -322,7 +322,35 @@ public enum PropertyDefinition {
             XmlaConstants.Access.ReadWrite,
             "1",
             XmlaConstants.Method.DISCOVER_AND_EXECUTE,
-            "An enumeration value that determines the behavior of subqueries.")
+            "An enumeration value that determines the behavior of subqueries."),
+
+    // Microsoft-specific XMLA definition. The Power BI on-premises gateway
+    // sends it on every request; XmlaHandler.identityOf applies it.
+    EffectiveUserName(
+            RowsetDefinition.Type.String,
+            null,
+            XmlaConstants.Access.Write,
+            "",
+            XmlaConstants.Method.DISCOVER_AND_EXECUTE,
+            "The user to run the request as. Honored only when the caller is granted mondrian.security.role.<role>.impersonate=allow; otherwise the request runs as the caller."),
+
+    // Microsoft-specific XMLA definition. Applied by XmlaHandler.getConnection.
+    Roles(
+            RowsetDefinition.Type.String,
+            null,
+            XmlaConstants.Access.Write,
+            "",
+            XmlaConstants.Method.DISCOVER_AND_EXECUTE,
+            "A comma-separated list of roles that restricts the request to those roles. Only roles the user is a member of can be named."),
+
+    // Microsoft-specific XMLA definition. Accepted and not used.
+    CustomData(
+            RowsetDefinition.Type.String,
+            null,
+            XmlaConstants.Access.Write,
+            "",
+            XmlaConstants.Method.DISCOVER_AND_EXECUTE,
+            "A string passed by the client for use by the data model. Accepted and not used.")
             ;
 
     final RowsetDefinition.Type type;

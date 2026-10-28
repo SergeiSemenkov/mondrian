@@ -79,9 +79,92 @@ public class XmlaHandler {
      * request; anonymous when no callback is configured.
      */
     static ServerPermissions.Identity identityOf(XmlaRequest request) {
-        return ServerPermissions.identity(
-            request.getAuthenticatedUser(),
-            request.getAuthenticatedUserGroups());
+        final ServerPermissions.Identity caller =
+            ServerPermissions.identity(
+                request.getAuthenticatedUser(),
+                request.getAuthenticatedUserGroups());
+        final String effectiveUser = request.getProperties() == null
+            ? null
+            : request.getProperties().get(
+                PropertyDefinition.EffectiveUserName.name());
+        if (effectiveUser == null || effectiveUser.trim().isEmpty()) {
+            return caller;
+        }
+        if (ServerPermissions.mayImpersonate(caller)) {
+            // The effective user is known by name only: the gateway sends the
+            // viewer's UPN and no groups, so it matches <RoleMember>s and
+            // server-role members that name the user.
+            return ServerPermissions.identity(effectiveUser.trim(), null);
+        }
+        // Not trusted to impersonate: run as the caller, which can only be
+        // as much as the caller could do anyway. Rejecting instead would break
+        // every Power BI report served through a gateway until the gateway's
+        // account is authenticated and granted the right.
+        final String callerName =
+            caller.getUser() == null ? "anonymous" : caller.getUser();
+        if (UNTRUSTED_IMPERSONATORS.size() < 1000
+            && UNTRUSTED_IMPERSONATORS.add(callerName))
+        {
+            // Once per caller: a gateway sends the property on every request.
+            // The effective user's name is left out because it names a person.
+            LOGGER.warn(
+                "EffectiveUserName ignored for caller '" + callerName
+                + "', who is not granted "
+                + ServerPermissions.ROLE_PROPERTY_PREFIX
+                + "<role>.impersonate=allow; requests run as the caller.");
+        }
+        return caller;
+    }
+
+    /** Callers already warned about an ignored {@code EffectiveUserName}. */
+    private static final java.util.Set<String> UNTRUSTED_IMPERSONATORS =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Applies the XML/A {@code Roles} property: narrows the roles the caller
+     * resolved to down to the ones it names. Only narrows -- naming a role the
+     * user is not a member of grants nothing, as in Analysis Services -- and
+     * fails readably when none of the named roles is held, rather than running
+     * the request with more access than was asked for.
+     *
+     * @param held Roles the caller resolved to, the schema's default role
+     *     already substituted when it matched none
+     * @return The roles to run with, or {@code held} itself if no
+     *     {@code Roles} property was sent
+     */
+    static List<String> restrictToRequestedRoles(
+        XmlaRequest request,
+        ServerPermissions.Identity identity,
+        List<String> held)
+        throws XmlaException
+    {
+        final String requested = request.getProperties() == null
+            ? null
+            : request.getProperties().get(PropertyDefinition.Roles.name());
+        if (requested == null || requested.trim().isEmpty()) {
+            return held;
+        }
+        final List<String> kept = new ArrayList<String>();
+        for (String name : ServerPermissions.splitGroups(requested)) {
+            for (String role : held) {
+                if (role.equalsIgnoreCase(name) && !kept.contains(role)) {
+                    kept.add(role);
+                }
+            }
+        }
+        if (kept.isEmpty()) {
+            final String who = identity.getUser() == null
+                ? "The anonymous user"
+                : "User '" + identity.getUser() + "'";
+            throw new XmlaException(
+                CLIENT_FAULT_FC,
+                HSB_ACCESS_DENIED_CODE,
+                HSB_ACCESS_DENIED_FAULT_FS,
+                new SecurityException(
+                    who + " is not a member of any role named in the Roles"
+                    + " property ('" + requested.trim() + "')."));
+        }
+        return kept;
     }
 
     /**
@@ -279,13 +362,26 @@ public class XmlaHandler {
                 props );
 
         final ServerPermissions.Identity identity = identityOf(request);
-        if (identity != ServerPermissions.ANONYMOUS) {
+        final String requestedRoles =
+            request.getProperties().get(PropertyDefinition.Roles.name());
+        if (identity != ServerPermissions.ANONYMOUS
+            || (requestedRoles != null && !requestedRoles.trim().isEmpty()))
+        {
             RolapSchema rolapSchema = ((MondrianOlap4jConnection)connection).getMondrianConnection().getSchema();
 
             // The engine substitutes the schema's defaultRole for a connection
-            // that names no role, so only explicit matches are set here.
+            // that names no role, so only explicit matches are set here --
+            // unless a Roles property has to narrow them, which needs the
+            // default role spelled out to have something to narrow.
             List<String> roles = ServerPermissions.matchRoleNames(
                 rolapSchema.getXMLSchema(), identity, false);
+            if (requestedRoles != null && !requestedRoles.trim().isEmpty()) {
+                if (roles.isEmpty()) {
+                    roles = ServerPermissions.matchRoleNames(
+                        rolapSchema.getXMLSchema(), identity, true);
+                }
+                roles = restrictToRequestedRoles(request, identity, roles);
+            }
             if(roles.size() > 0) {
                 ((MondrianOlap4jConnection) connection).setRoleNames(roles);
             }
