@@ -135,6 +135,10 @@ public abstract class Rowset implements XmlaConstants {
         this.deep = deep;
     }
 
+    /** Known but unused property names already logged. */
+    private static final Set<String> REPORTED_IGNORED_PROPERTIES =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /** Unknown property names already logged, lower-cased. */
     private static final Set<String> REPORTED_UNKNOWN_PROPERTIES =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
@@ -188,10 +192,25 @@ public abstract class Rowset implements XmlaConstants {
             }
             return;
         default:
-            LOGGER.warn(
-                "Warning: Rowset '" + rowsetDefinition.name()
-                + "' does not support property '" + propertyDef.name()
-                + "' (value is '" + value + "')");
+            // Clients send these on every request -- the Power BI gateway's
+            // MSOLAP sends SspropInitAppName, ClientProcessID, Cube, Timeout
+            // and more on every Discover -- so a WARN with the value here was
+            // several lines per query. Once per property name is enough to see
+            // what clients send; the value only at DEBUG.
+            if (REPORTED_IGNORED_PROPERTIES.size() < 200
+                && REPORTED_IGNORED_PROPERTIES.add(propertyDef.name()))
+            {
+                LOGGER.info(
+                    "XML/A property '" + propertyDef.name()
+                    + "' is accepted and not used (first seen on rowset '"
+                    + rowsetDefinition.name() + "'; reported once)");
+            }
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug(
+                    "Rowset '" + rowsetDefinition.name()
+                    + "' ignores property '" + propertyDef.name()
+                    + "' (value is '" + value + "')");
+            }
         }
     }
 
