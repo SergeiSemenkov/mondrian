@@ -3000,6 +3000,23 @@ public class Query extends QueryPart {
                 Object key = getValue();
                 if (key == RolapUtil.sqlNullValue) {
                     buf.append(" is null");
+                } else if (getConstrainedColumn().getDatatype() != null
+                    && getConstrainedColumn().getDatatype().isNumeric())
+                {
+                    // The caption of a level with no name column is its
+                    // numeric key, so the column is a number while the value
+                    // is text. Quoted, ClickHouse rejects anything that is not
+                    // a number ('Q1' against a 1..4 Quarter key: code 53, type
+                    // mismatch) and fails the whole query, where the answer is
+                    // simply "no member has that caption".
+                    final java.math.BigDecimal number =
+                        parseNumber(key.toString());
+                    if (number == null) {
+                        buf.setLength(buf.length() - expr.length());
+                        buf.append("1 = 0");
+                    } else {
+                        buf.append(" = ").append(number.toPlainString());
+                    }
                 } else {
                     buf.append(" = ");
                     Dialect.Datatype.String.quoteValue(
@@ -3007,6 +3024,15 @@ public class Query extends QueryPart {
                 }
             }
         };
+    }
+
+    /** The value as a number, or null if it is not one. */
+    private static java.math.BigDecimal parseNumber(String text) {
+        try {
+            return new java.math.BigDecimal(text.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static class CurrentMemberPropertyReference {

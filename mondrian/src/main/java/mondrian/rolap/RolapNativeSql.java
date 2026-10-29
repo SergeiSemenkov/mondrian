@@ -347,6 +347,10 @@ public class RolapNativeSql {
                     : rolapLevel.nameExp == null
                         ? rolapLevel.keyExp
                         : rolapLevel.nameExp;
+                lastPropertyIsNumericKey =
+                    expression == rolapLevel.keyExp
+                    && rolapLevel.getDatatype() != null
+                    && rolapLevel.getDatatype().isNumeric();
                  // If an aggregation table is used, it might be more efficient
                  // to use only the aggregate table and not the hierarchy table.
                  // Try to lookup the column bit key. If that fails, we will
@@ -648,6 +652,61 @@ public class RolapNativeSql {
      * Compiles a string property access like <code>CurrentMember.Name</code>
      * or similar member property expressions that return strings.
      */
+    /**
+     * Set by {@link StringMemberPropertySqlCompiler} when the column it chose
+     * for a Caption/Name is the level's <em>numeric</em> key -- a level with no
+     * name or caption column, whose captions are its key values.
+     */
+    private boolean lastPropertyIsNumericKey;
+
+    /**
+     * A string {@code =}/{@code <>} comparison. Declines -- so the filter is
+     * evaluated by the engine instead of in SQL -- when a numeric-key caption
+     * is compared with text that is not a number: in SQL that compares a
+     * number column with a string literal, which ClickHouse rejects outright
+     * (code 53, type mismatch), while the right answer is simply "no match".
+     * A Power BI filter 'Time'[Time.Quarter] = "Q1" on an attribute whose
+     * captions are 1..4 failed the whole query that way.
+     */
+    class StringComparisonSqlCompiler extends InfixOpSqlCompiler {
+        private final SqlCompiler argumentCompiler;
+
+        StringComparisonSqlCompiler(String op, SqlCompiler argumentCompiler) {
+            super(Category.Logical, op, op, argumentCompiler);
+            this.argumentCompiler = argumentCompiler;
+        }
+
+        public String compile(Exp exp) {
+            if (exp instanceof FunCall && ((FunCall) exp).getArgCount() == 2) {
+                final FunCall call = (FunCall) exp;
+                for (int i = 0; i < 2; i++) {
+                    final Exp literal = call.getArg(1 - i);
+                    if (literal instanceof Literal
+                        && ((Literal) literal).getValue() instanceof String
+                        && !isNumber((String) ((Literal) literal).getValue()))
+                    {
+                        lastPropertyIsNumericKey = false;
+                        final String column =
+                            argumentCompiler.compile(call.getArg(i));
+                        if (column != null && lastPropertyIsNumericKey) {
+                            return null;
+                        }
+                    }
+                }
+            }
+            return super.compile(exp);
+        }
+
+        private boolean isNumber(String text) {
+            try {
+                new java.math.BigDecimal(text.trim());
+                return true;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+    }
+
     class StringMemberPropertySqlCompiler extends MemberSqlCompiler {
         public String compile(Exp exp) {
             // Handle CurrentMember.Name pattern
@@ -824,11 +883,9 @@ public class RolapNativeSql {
 
         // Add string comparison operators
         booleanCompiler.add(
-            new InfixOpSqlCompiler(
-                Category.Logical, "=", "=", stringCompiler));
+            new StringComparisonSqlCompiler("=", stringCompiler));
         booleanCompiler.add(
-            new InfixOpSqlCompiler(
-                Category.Logical, "<>", "<>", stringCompiler));
+            new StringComparisonSqlCompiler("<>", stringCompiler));
 
         // Add logical/boolean comparison operators
         booleanCompiler.add(
