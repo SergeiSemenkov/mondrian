@@ -2202,6 +2202,9 @@ public enum RowsetDefinition {
                         propertyValue = catalogs.get(0).getName();
                     }
                 }
+                else if (propertyDefinition == PropertyDefinition.ProviderVersion) {
+                    propertyValue = PropertyDefinition.providerVersion();
+                }
                 else {
                     propertyValue = propertyDefinition.value;
                 }
@@ -2740,7 +2743,7 @@ public enum RowsetDefinition {
                         new XmlElement("ID", null, hostName),
                         new XmlElement("CreatedTimestamp", null, formattedDate),
                         new XmlElement("LastSchemaUpdate", null, formattedDate),
-                        new XmlElement("Version", null, "13.0.5026.0"),
+                        new XmlElement("Version", null, PropertyDefinition.providerVersion()),
                         new XmlElement("Edition", null, "OpenSource"),
                         new XmlElement("EditionID", null, "1"),
                         new XmlElement("ServerMode", null, "Multidimensional"),

@@ -382,6 +382,28 @@ public enum PropertyDefinition {
         this.description = description;
     }
 
+    /** Property that overrides the server version reported to clients. */
+    public static final String PROVIDER_VERSION_PROPERTY =
+        "mondrian.xmla.providerVersion";
+
+    /**
+     * The server version reported as {@link #ProviderVersion} and as the
+     * server's {@code Version} in DISCOVER_XML_METADATA: the
+     * {@value #PROVIDER_VERSION_PROPERTY} property if set, otherwise the
+     * built-in value (SSAS 2016 SP1). Clients gate features on it -- Power BI
+     * offers hierarchy slicers only from 15.x (SSAS 2019) -- so a different
+     * value changes what they send, which is why it is a setting to trial per
+     * deployment and not a new default.
+     */
+    public static String providerVersion() {
+        final String configured =
+            mondrian.olap.MondrianProperties.instance()
+                .getProperty(PROVIDER_VERSION_PROPERTY);
+        return configured == null || configured.trim().isEmpty()
+            ? ProviderVersion.value
+            : configured.trim();
+    }
+
     /**
      * Returns the description of this PropertyDefinition.
      *
