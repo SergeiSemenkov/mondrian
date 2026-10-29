@@ -467,6 +467,18 @@ public class Execution {
     FRESH, RUNNING, ERROR, CANCELED, TIMEOUT, DONE,
   }
 
+  public int getCellCacheHitCount() {
+    return cellCacheHitCount;
+  }
+
+  public int getCellCacheMissCount() {
+    return cellCacheMissCount;
+  }
+
+  public int getCellCachePendingCount() {
+    return cellCachePendingCount;
+  }
+
   public int getExpCacheHitCount() {
     return expCacheHitCount;
   }

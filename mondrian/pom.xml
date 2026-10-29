@@ -8,7 +8,7 @@
     <version>9.3.0.0-SNAPSHOT</version>
   </parent>
   <artifactId>mondrian</artifactId>
-  <version>9.3.0-emondrian.57</version>
+  <version>9.3.0-emondrian.58</version>
   <name>Pentaho Community Edition Project: ${project.artifactId}</name>
   <description>Mondrian OLAP Engine</description>
   <url>http://mondrian.pentaho.com</url>
@@ -206,6 +206,35 @@
       <groupId>io.prometheus</groupId>
       <artifactId>simpleclient_servlet_jakarta</artifactId>
       <version>0.16.0</version>
+    </dependency>
+    <!-- OpenTelemetry tracing (mondrian.trace.Tracing). Off unless an OTLP endpoint is
+         configured. HTTP/protobuf export over the JDK's own HttpClient: the default OkHttp
+         sender is excluded, so no Kotlin/OkHttp jars land in WEB-INF/lib. -->
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-api</artifactId>
+      <version>1.55.0</version>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-sdk</artifactId>
+      <version>1.55.0</version>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-otlp</artifactId>
+      <version>1.55.0</version>
+      <exclusions>
+        <exclusion>
+          <groupId>io.opentelemetry</groupId>
+          <artifactId>opentelemetry-exporter-sender-okhttp</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>io.opentelemetry</groupId>
+      <artifactId>opentelemetry-exporter-sender-jdk</artifactId>
+      <version>1.55.0</version>
     </dependency>
     <dependency>
       <groupId>redis.clients</groupId>

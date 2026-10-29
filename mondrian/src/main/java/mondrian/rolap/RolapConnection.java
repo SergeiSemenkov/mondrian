@@ -618,6 +618,40 @@ public class RolapConnection extends ConnectionBase {
 
   private Result executeInternal( final Execution execution ) {
     execution.setContextMap();
+    // The execution's span. It is made current, so the SQL that loads its cells -- run on
+    // segment-loader threads that copy this thread's ThreadContext -- nests under it.
+    final mondrian.trace.Tracing.SpanHandle span =
+      mondrian.trace.Tracing.start( "mdx.execute", true );
+    try {
+      if ( span.isRecording() ) {
+        final Query query = execution.getMondrianStatement().getQuery();
+        span.set( "emondrian.execution.id", execution.getId() )
+          .set( "emondrian.catalog", getCatalogName() )
+          .set( "emondrian.cube", query.getCube() == null ? null : query.getCube().getName() );
+        if ( mondrian.trace.Tracing.includeText() ) {
+          span.text( "db.query.text", Util.unparse( query ) );
+        }
+      }
+      final Result result = executeSpanned( execution );
+      if ( span.isRecording() ) {
+        span.set( "emondrian.cells", result.getCellsCount() );
+      }
+      return result;
+    } catch ( RuntimeException | Error e ) {
+      span.error( e );
+      throw e;
+    } finally {
+      span.set( "emondrian.cell_cache.hits", execution.getCellCacheHitCount() )
+        .set( "emondrian.cell_cache.misses", execution.getCellCacheMissCount() )
+        .set( "emondrian.cell_cache.pending", execution.getCellCachePendingCount() )
+        .set( "emondrian.exp_cache.hits", execution.getExpCacheHitCount() )
+        .set( "emondrian.exp_cache.misses", execution.getExpCacheMissCount() )
+        .end();
+    }
+  }
+
+  /** {@link #executeInternal} inside its span; the ThreadContext is already the execution's. */
+  private Result executeSpanned( final Execution execution ) {
     final Statement statement = execution.getMondrianStatement();
     // Cleanup any previous executions still running
     synchronized ( statement ) {

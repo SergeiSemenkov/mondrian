@@ -39,10 +39,9 @@ public class MDCUtil {
    * 
    */
   public void setContextMap() {
-    final Map<String, String> old = ThreadContext.getContext();
-    if ( old != null ) {
-      old.clear();
-    }
+    // getContext() returns a copy, so clearing it cleared nothing: keys the snapshot does not
+    // have -- a previous request's trace_id/span_id on a pooled thread -- stayed behind.
+    ThreadContext.clearMap();
     for ( Entry<String, String> entry : mdc.entrySet() ) {
       ThreadContext.put( entry.getKey(), entry.getValue() );
     }

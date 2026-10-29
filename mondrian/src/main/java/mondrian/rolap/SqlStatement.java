@@ -88,6 +88,8 @@ public class SqlStatement {
   private boolean haveSemaphore;
   public int rowCount;
   private long startTimeMillis;
+  /** This statement's span, from execute() to close(); NOOP when tracing is off. */
+  private mondrian.trace.Tracing.SpanHandle span = mondrian.trace.Tracing.NOOP;
   private final List<Accessor> accessors = new ArrayList<>();
   private State state = State.FRESH;
   private final long id;
@@ -143,9 +145,20 @@ public class SqlStatement {
       // Check execution state
       locus.execution.checkCancelOrTimeout();
 
+      span = mondrian.trace.Tracing.start( "sql", false );
+      final long waitStart = System.nanoTime();
       this.jdbcConnection = dataSource.getConnection();
       querySemaphore.acquire();
       haveSemaphore = true;
+      if ( span.isRecording() ) {
+        span.set( "db.system", "sql" )
+          .set( "emondrian.sql.id", id )
+          .set( "emondrian.component", locus.component )
+          .set( "emondrian.purpose", String.valueOf( getPurpose() ) )
+          .set( "emondrian.execution.id", locus.execution.getId() )
+          .set( "emondrian.sql.wait_ms", ( System.nanoTime() - waitStart ) / 1000000 )
+          .text( "db.query.text", sql );
+      }
       // Trace start of execution.
       if ( RolapUtil.SQL_LOGGER.isDebugEnabled() ) {
         StringBuilder sqllog = new StringBuilder();
@@ -229,6 +242,7 @@ public class SqlStatement {
       final long executeMillis = executeNanos / 1000000;
       Util.addDatabaseTime( executeMillis );
       status = ", exec " + executeMillis + " ms";
+      span.set( "emondrian.sql.exec_ms", executeMillis );
 
       locus.getServer().getMonitor().sendEvent(
         new SqlStatementExecuteEvent(
@@ -251,6 +265,8 @@ public class SqlStatement {
       }
     } catch ( Throwable e ) {
       status = ", failed (" + e + ")";
+      span.error( e );
+      span.end();
 
       // This statement was leaked to us. It is our responsibility
       // to dispose of it.
@@ -311,6 +327,9 @@ public class SqlStatement {
       totalMs = endTime - startTimeMillis;
     }
     String status = formatTimingStatus( totalMs, rowCount );
+    span.set( "emondrian.sql.rows", rowCount )
+      .set( "emondrian.sql.exec_fetch_ms", totalMs )
+      .end();
 
     locus.execution.getQueryTiming().markFull(
       TIMING_NAME + locus.component, totalMs );

@@ -895,6 +895,46 @@ public class XmlaHandler {
      * @param response Destination for response
      * @throws XmlaException on error
      */
+    /**
+     * An Execute inside its trace's root span (mondrian.trace.Tracing). Discover requests are
+     * not traced: Power BI and Excel send many per query and they run no MDX or SQL.
+     */
+    private void executeTraced(XmlaRequest request, XmlaResponse response)
+        throws XmlaException
+    {
+        mondrian.trace.Tracing.SpanHandle span =
+            mondrian.trace.Tracing.start("xmla.execute", true, true);
+        if (!span.isRecording()) {
+            span.end();
+            execute(request, response);
+            return;
+        }
+        try {
+            String statement = request.getStatement();
+            span.set("rpc.system", "xmla")
+                .set("session.id", request.getSessionId())
+                .set("enduser.id", request.getUsername())
+                .set("query.language", mondrian.trace.Tracing.language(statement))
+                .text("db.query.text", statement);
+            Map<String, String> props = request.getProperties();
+            if (props != null) {
+                span.set("emondrian.catalog", props.get("Catalog"))
+                    .set("emondrian.cube", props.get("Cube"));
+            }
+            String[] origin = mondrian.trace.ClientAddress.origin();
+            if (origin != null) {
+                span.set("client.address", origin[0])
+                    .set("user_agent.original", origin[1]);
+            }
+            execute(request, response);
+        } catch (RuntimeException e) {
+            span.error(e);
+            throw e;
+        } finally {
+            span.end();
+        }
+    }
+
     public void process(XmlaRequest request, XmlaResponse response)
         throws XmlaException
     {
@@ -906,7 +946,7 @@ public class XmlaHandler {
             discover(request, response);
             break;
         case EXECUTE:
-            execute(request, response);
+            executeTraced(request, response);
             break;
         default:
             throw new XmlaException(

@@ -148,6 +148,25 @@ public abstract class XmlaServlet
         HttpServletResponse response)
         throws ServletException, IOException
     {
+        // The client as a trace may record it (resolved through trusted proxies, then cut to
+        // its network); read by XmlaHandler when it starts the request's span.
+        mondrian.trace.ClientAddress.setOrigin(
+            request.getRemoteAddr(),
+            request.getHeader("X-Forwarded-For"),
+            request.getHeader("X-Real-IP"),
+            request.getHeader("User-Agent"));
+        try {
+            doPostInternal(request, response);
+        } finally {
+            mondrian.trace.ClientAddress.clearOrigin();
+        }
+    }
+
+    private void doPostInternal(
+        HttpServletRequest request,
+        HttpServletResponse response)
+        throws ServletException, IOException
+    {
         // Request Soap Header and Body
         // header [0] and body [1]
         Element[] requestSoapParts = new Element[2];
