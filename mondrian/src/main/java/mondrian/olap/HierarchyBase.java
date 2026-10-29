@@ -91,7 +91,11 @@ public abstract class HierarchyBase
             if (this.subName != null) {
                 // e.g. "Time.Weekly"
                 this.name = name + "." + subName;
-                if (this.subName.equals(name)) {
+                if (this.subName.equals(name)
+                    && !(dimension instanceof DimensionBase
+                        && ((DimensionBase) dimension)
+                            .isDimensionUniqueNameTaken()))
+                {
                     this.uniqueName = dimension.getUniqueName();
                 } else {
                     // e.g. "[Time.Weekly]"

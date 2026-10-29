@@ -77,6 +77,19 @@ public class RolapCubeDimension extends RolapDimension {
           factCube = lookupFactCube(cubeDim, cube.getSchema());
         }
         for (int i = 0; i < rolapDim.getHierarchies().length; i++) {
+          // As in RolapDimension: once a hierarchy holds this dimension's
+          // unique name, the attribute hierarchies after it may not take it.
+          dimensionUniqueNameTaken = false;
+          for (int j = 0; j < i; j++) {
+              if (hierarchies[j].getUniqueName().equals(getUniqueName())) {
+                  dimensionUniqueNameTaken = true;
+              }
+          }
+          if (!RolapDimension.isAttributeHierarchy(
+                  (RolapHierarchy) rolapDim.getHierarchies()[i]))
+          {
+              dimensionUniqueNameTaken = false;
+          }
           final RolapCubeHierarchy cubeHierarchy =
                 new RolapCubeHierarchy(
                     this,
@@ -88,6 +101,7 @@ public class RolapCubeDimension extends RolapDimension {
             hierarchies[i] = cubeHierarchy;
             hierarchyList.add(cubeHierarchy);
         }
+        dimensionUniqueNameTaken = false;
     }
 
     RolapCube lookupFactCube(

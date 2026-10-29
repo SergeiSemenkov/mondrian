@@ -33,6 +33,21 @@ public abstract class DimensionBase
     protected DimensionType dimensionType;
 
     /**
+     * Set while a dimension builds its attribute hierarchies, when one of its
+     * user hierarchies already has the dimension's own unique name -- an
+     * unnamed {@code <Hierarchy>}, say. An attribute hierarchy named after the
+     * dimension would otherwise get that same unique name, and every lookup by
+     * it would find the user hierarchy instead. See
+     * {@link HierarchyBase#HierarchyBase}.
+     */
+    protected boolean dimensionUniqueNameTaken;
+
+    /** Whether a hierarchy of this dimension already has its unique name. */
+    public boolean isDimensionUniqueNameTaken() {
+        return dimensionUniqueNameTaken;
+    }
+
+    /**
      * Creates a DimensionBase.
      *
      * @param name Name

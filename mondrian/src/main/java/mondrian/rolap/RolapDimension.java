@@ -191,7 +191,18 @@ class RolapDimension extends DimensionBase {
             hierarchyList.add(hierarchy);
         }
 
-        // Create additional hierarchies from attributes
+        // Create additional hierarchies from attributes. An attribute named
+        // after the dimension gets the unique name [Dim.Attr], not [Dim], when a
+        // user hierarchy already holds [Dim]: OnTime's unnamed Origin Airport
+        // hierarchy and its Origin Airport attribute both got [Origin Airport],
+        // so [Origin Airport].[Origin Airport].Members returned the user
+        // hierarchy's states, cities and airports where the attribute's 435
+        // airports were meant.
+        for (RolapHierarchy hierarchy : hierarchyList) {
+            if (hierarchy.getUniqueName().equals(getUniqueName())) {
+                dimensionUniqueNameTaken = true;
+            }
+        }
         if (xmlDimension.Attributes != null) {
             for (MondrianDef.DimensionAttribute xmlDimensionAttribute : xmlDimension.Attributes) {
                 if (xmlDimensionAttribute.attributeHierarchyEnabled == null || xmlDimensionAttribute.attributeHierarchyEnabled) {
@@ -202,6 +213,7 @@ class RolapDimension extends DimensionBase {
         }
 
         this.hierarchies = hierarchyList.toArray(new RolapHierarchy[0]);
+        dimensionUniqueNameTaken = false;
 
         // if there was no dimension type assigned, determine now.
         if (dimensionType == null) {
@@ -384,6 +396,22 @@ class RolapDimension extends DimensionBase {
         RolapHierarchy hierarchy = new RolapHierarchy(
                 cube, this, xmlHierarchy, xmlCubeDimension);
         return hierarchy;
+    }
+
+    /**
+     * Whether {@code hierarchy} was generated from a dimension attribute.
+     * HIERARCHY_ORIGIN is a bit mask: a key attribute is ATTRIBUTE|KEY (6).
+     */
+    static boolean isAttributeHierarchy(RolapHierarchy hierarchy) {
+        final MondrianDef.Hierarchy xml = hierarchy.getXmlHierarchy();
+        if (xml == null || xml.origin == null) {
+            return false;
+        }
+        try {
+            return (Integer.parseInt(xml.origin.trim()) & 2) != 0;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     /** Returns the dimension's usage='Key' attribute, or null if it has none. */
