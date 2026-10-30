@@ -40,10 +40,14 @@ public class UrlRepositoryContentFinder
         this.url = url;
     }
 
+    /**
+     * The registry exactly as stored. Placeholders such as {@code ${env:EMONDRIAN_CH_PASSWORD}} are not
+     * substituted here but when a connection is opened ({@link mondrian.util.Placeholders}), so
+     * whoever reads or saves the registry sees and keeps the placeholder, never the value.
+     */
     public String getContent() {
         try {
-            return Util.readURL(
-                url, Util.toMap(System.getProperties()));
+            return Util.readURL(url, null);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }

@@ -3366,7 +3366,9 @@ public class Util extends XOMUtil {
         final int BUF_SIZE = 8096;
         try {
             String xmlCatalog = readFully(r, BUF_SIZE);
-            xmlCatalog = Util.replaceProperties(xmlCatalog, map);
+            if (map != null) {
+                xmlCatalog = Util.replaceProperties(xmlCatalog, map);
+            }
             return xmlCatalog;
         } finally {
             r.close();

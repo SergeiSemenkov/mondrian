@@ -127,8 +127,8 @@ public class RolapConnection extends ConnectionBase {
       RolapConnectionProperties.Provider.name(), "mondrian" );
     Util.assertTrue( provider.equalsIgnoreCase( "mondrian" ) );
     this.connectInfo = connectInfo;
-    this.catalogUrl =
-      connectInfo.get( RolapConnectionProperties.Catalog.name() );
+    this.catalogUrl = mondrian.util.Placeholders.resolve(
+      connectInfo.get( RolapConnectionProperties.Catalog.name() ) );
     final String jdbcUser =
       connectInfo.get( RolapConnectionProperties.JdbcUser.name() );
     final String jdbcConnectString = getJdbcConnectionString( connectInfo );
@@ -331,18 +331,22 @@ public class RolapConnection extends ConnectionBase {
     Util.PropertyList connectInfo,
     StringBuilder buf ) {
     assert buf != null;
-    final String jdbcConnectString = getJdbcConnectionString( connectInfo );
-    final String jdbcUser =
+    // ${env:NAME} / ${name} placeholders are resolved here, for the driver only: buf, which ends
+    // up in error messages, keeps them as written (mondrian.util.Placeholders).
+    final String jdbcConnectStringAsWritten = getJdbcConnectionString( connectInfo );
+    final String jdbcConnectString = Placeholders.resolve( jdbcConnectStringAsWritten );
+    final String jdbcUserAsWritten =
       connectInfo.get( RolapConnectionProperties.JdbcUser.name() );
-    final String jdbcPassword =
-      connectInfo.get( RolapConnectionProperties.JdbcPassword.name() );
-    final String dataSourceName =
-      connectInfo.get( RolapConnectionProperties.DataSource.name() );
+    final String jdbcUser = Placeholders.resolve( jdbcUserAsWritten );
+    final String jdbcPassword = Placeholders.resolve(
+      connectInfo.get( RolapConnectionProperties.JdbcPassword.name() ) );
+    final String dataSourceName = Placeholders.resolve(
+      connectInfo.get( RolapConnectionProperties.DataSource.name() ) );
 
     if ( dataSource != null ) {
       appendKeyValue( buf, "Anonymous data source", dataSource );
       appendKeyValue(
-        buf, RolapConnectionProperties.JdbcUser.name(), jdbcUser );
+        buf, RolapConnectionProperties.JdbcUser.name(), jdbcUserAsWritten );
       if ( jdbcUser != null || jdbcPassword != null ) {
         dataSource =
           new UserPasswordDataSource(
@@ -353,9 +357,9 @@ public class RolapConnection extends ConnectionBase {
     } else if ( jdbcConnectString != null ) {
       // Get connection through own pooling datasource
       appendKeyValue(
-        buf, RolapConnectionProperties.Jdbc.name(), jdbcConnectString );
+        buf, RolapConnectionProperties.Jdbc.name(), jdbcConnectStringAsWritten );
       appendKeyValue(
-        buf, RolapConnectionProperties.JdbcUser.name(), jdbcUser );
+        buf, RolapConnectionProperties.JdbcUser.name(), jdbcUserAsWritten );
       String jdbcDrivers =
         connectInfo.get( RolapConnectionProperties.JdbcDrivers.name() );
       if ( jdbcDrivers != null ) {
@@ -370,6 +374,7 @@ public class RolapConnection extends ConnectionBase {
       for ( Map.Entry<String, String> entry : map.entrySet() ) {
         // FIXME ordering is non-deterministic
         appendKeyValue( buf, entry.getKey(), entry.getValue() );
+        jdbcProperties.put( entry.getKey(), Placeholders.resolve( entry.getValue() ) );
       }
 
       if ( jdbcUser != null ) {
@@ -406,11 +411,11 @@ public class RolapConnection extends ConnectionBase {
       appendKeyValue(
         buf,
         RolapConnectionProperties.DataSource.name(),
-        dataSourceName );
+        connectInfo.get( RolapConnectionProperties.DataSource.name() ) );
       appendKeyValue(
         buf,
         RolapConnectionProperties.JdbcUser.name(),
-        jdbcUser );
+        jdbcUserAsWritten );
 
       // Data sources are fairly smart, so we assume they look after
       // their own pooling. Therefore the default is false.
