@@ -2705,6 +2705,8 @@ public enum RowsetDefinition {
     }
 
     static class DiscoverXmlMetadataRowset extends Rowset {
+        private static final String ASSL_NAMESPACE =
+            "http://schemas.microsoft.com/analysisservices/2003/engine";
         private final Util.Functor1<Boolean, Catalog> catalogNameCond;
 
         DiscoverXmlMetadataRowset(XmlaRequest request, XmlaHandler handler) {
@@ -2751,7 +2753,48 @@ public enum RowsetDefinition {
         {
             String contentProperty = this.properties.get("Content");
             String objectType = this.getRestrictionValueAsString(ObjectType);
-            if(contentProperty != null && contentProperty.equals("SchemaData")) {
+            String databaseId = this.getRestrictionValueAsString(DatabaseID);
+            if (objectType == null && databaseId != null) {
+                // A database, as Analysis Services describes one (ASSL, in the
+                // engine namespace). The Power BI Service's model change
+                // tracker reads it on every scheduled refresh; it used to get
+                // the <Server> element below, without a namespace, and failed
+                // with ServerError_QueryOptimization_FailedDeserializeSchema.
+                Format formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
+                String now = formatter.format(new Date());
+                for (Catalog catalog : catIter(connection, catalogNameCond)) {
+                    Date loaded = null;
+                    try {
+                        for (Schema schema : catalog.getSchemas()) {
+                            loaded = getExtra(connection).getSchemaLoadDate(schema);
+                            break;
+                        }
+                    } catch (OlapException e) {
+                        throw new RuntimeException(e);
+                    }
+                    String schemaUpdate =
+                        loaded == null ? now : formatter.format(loaded);
+                    Row row = new Row();
+                    row.set(METADATA.name, new XmlElement("Database",
+                        new Object[] {"xmlns", ASSL_NAMESPACE},
+                        new XmlElement[] {
+                            new XmlElement("Name", null, catalog.getName()),
+                            new XmlElement("ID", null, catalog.getName()),
+                            new XmlElement("CreatedTimestamp", null, schemaUpdate),
+                            new XmlElement("LastSchemaUpdate", null, schemaUpdate),
+                            // ROLAP: the source data can change at any time
+                            // without the server knowing, so it is "now", as
+                            // MDSCHEMA_CUBES.LAST_DATA_UPDATE.
+                            new XmlElement("LastProcessed", null, now),
+                            new XmlElement("State", null, "Processed"),
+                            new XmlElement("LastUpdate", null, now),
+                            new XmlElement("CompatibilityLevel", null, "1100"),
+                        }));
+                    addRow(row, rows);
+                }
+            }
+            else if(objectType == null
+                    && contentProperty != null && contentProperty.equals("SchemaData")) {
                 Row row = new Row();
 
                 Format formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
@@ -2768,7 +2811,8 @@ public enum RowsetDefinition {
                     hostName = "unknownHost";
                 }
 
-                XmlElement xmlServerXmlElement = new XmlElement("Server", null, new XmlElement[]{
+                XmlElement xmlServerXmlElement = new XmlElement("Server",
+                        new Object[] {"xmlns", ASSL_NAMESPACE}, new XmlElement[]{
                         new XmlElement("Name", null, hostName),
                         new XmlElement("ID", null, hostName),
                         new XmlElement("CreatedTimestamp", null, formattedDate),
