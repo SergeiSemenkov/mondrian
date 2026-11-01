@@ -305,12 +305,21 @@ public abstract class Rowset implements XmlaConstants {
     protected void emit(Row row, XmlaResponse response)
         throws XmlaException, SQLException
     {
+        emit(row, response, rowsetDefinition.columnDefinitions);
+    }
+
+    /**
+     * Emits a row with the given columns only, in the given order (a DMV
+     * query's projection).
+     */
+    void emit(
+        Row row, XmlaResponse response, RowsetDefinition.Column[] columns)
+        throws XmlaException, SQLException
+    {
         SaxWriter writer = response.getWriter();
 
         writer.startElement("row");
-        for (RowsetDefinition.Column column
-            : rowsetDefinition.columnDefinitions)
-        {
+        for (RowsetDefinition.Column column : columns) {
             Object value = row.get(column.name);
             Object[] attributes = row.getAttributes(column.name);
             if (value == null) {
@@ -617,6 +626,16 @@ public abstract class Rowset implements XmlaConstants {
         public Object get(String name) {
             int i = this.names.indexOf(name);
             return (i < 0) ? null : this.values.get(i);
+        }
+
+        /** As {@link #get(String)}, matching the name without regard to case. */
+        public Object getIgnoreCase(String name) {
+            for (int i = 0; i < this.names.size(); i++) {
+                if (this.names.get(i).equalsIgnoreCase(name)) {
+                    return this.values.get(i);
+                }
+            }
+            return null;
         }
 
         public Object[] getAttributes(String name) {

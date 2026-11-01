@@ -1058,6 +1058,9 @@ QueryPart dmvSelectStatement() :
 {
     <SELECT>
     (
+        // SELECT * -- every column, the same as no column list.
+        <ASTERISK>
+    |
         c = compoundId() { columns.add(c); }
         (
             <COMMA>

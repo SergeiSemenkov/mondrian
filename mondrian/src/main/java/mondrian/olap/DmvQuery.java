@@ -33,6 +33,11 @@ public class DmvQuery extends QueryPart {
         return this.tableName;
     }
 
+    /** The selected columns in order; empty for {@code SELECT *} or no column list. */
+    public List<String> getColumns() {
+        return this.columns;
+    }
+
     public Exp getWhereExpression() {
         return this.whereExpression;
     }

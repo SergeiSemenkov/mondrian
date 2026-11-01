@@ -1250,6 +1250,7 @@ public class XmlaHandler {
                             dmvXmlaRequest,
                             response,
                             dmvQuery.getTableName().toUpperCase(),
+                            dmvQuery.getColumns(),
                             dmvQuery.getWhereExpression(),
                             defaultXmlaRequest.getParameters()
                     );
@@ -3689,6 +3690,7 @@ public class XmlaHandler {
             mondrian.xmla.impl.DmvXmlaRequest dmvXmlaRequest,
             XmlaResponse response,
             String rowsetName,
+            List<String> columnNames,
             mondrian.olap.Exp whereExpression,
             Map<String, String> parameters)
             throws XmlaException
@@ -3696,13 +3698,41 @@ public class XmlaHandler {
         final RowsetDefinition rowsetDefinition =
                 RowsetDefinition.valueOf(rowsetName);
 
+        // The selected columns, in the order asked for; all of them for
+        // SELECT * or no column list. A name the rowset does not have is an
+        // error, as in Analysis Services, rather than a column left out.
+        final RowsetDefinition.Column[] columns;
+        if (columnNames == null || columnNames.isEmpty()) {
+            columns = null;
+        } else {
+            columns = new RowsetDefinition.Column[columnNames.size()];
+            for (int i = 0; i < columns.length; i++) {
+                columns[i] = rowsetDefinition.findColumn(columnNames.get(i));
+                if (columns[i] == null) {
+                    throw new XmlaException(
+                        CLIENT_FAULT_FC,
+                        HSB_EXECUTE_QUERY_CODE,
+                        HSB_EXECUTE_QUERY_FAULT_FS,
+                        Util.newError(
+                            "Column '" + columnNames.get(i)
+                            + "' does not exist in $SYSTEM." + rowsetName));
+                }
+            }
+        }
+
         Rowset rowset = rowsetDefinition.getRowset(dmvXmlaRequest, this);
 
         SaxWriter writer = response.getWriter();
         writer.startDocument();
 
+        // A DMV query is sent as an Execute, so it is answered as one:
+        // ExecuteResponse holding a tabular rowset, as Analysis Services does.
+        // It used to be a DiscoverResponse with every column of the rowset,
+        // which ADOMD.NET read but the Power BI Service rejected
+        // (ServerError_QueryOptimization_FailedDeserializeSchema on its
+        // scheduled cache refresh through the gateway).
         writer.startElement(
-                "DiscoverResponse",
+                "ExecuteResponse",
                 "xmlns", NS_XMLA);
         writer.startElement("return");
         writer.startElement(
@@ -3712,7 +3742,11 @@ public class XmlaHandler {
                 "xmlns:xsd", NS_XSD,
                 "xmlns:EX", NS_XMLA_EX);
 
-        rowset.rowsetDefinition.writeRowsetXmlSchema(writer);
+        if (columns == null) {
+            rowset.rowsetDefinition.writeRowsetXmlSchema(writer);
+        } else {
+            rowset.rowsetDefinition.writeRowsetXmlSchema(writer, columns);
+        }
 
         try {
             //copied from rowset.unparse(response);
@@ -3726,7 +3760,11 @@ public class XmlaHandler {
             writer.startSequence(null, "row");
             for (Rowset.Row row : rows) {
                 if(isCompatable(row, whereExpression, parameters)) {
-                    rowset.emit(row, response);
+                    if (columns == null) {
+                        rowset.emit(row, response);
+                    } else {
+                        rowset.emit(row, response, columns);
+                    }
                 }
             }
             writer.endSequence();
@@ -3812,7 +3850,8 @@ public class XmlaHandler {
                 return value;
             }
             else {
-                Object value = row.get(columnName);
+                // DMV column names are case-insensitive (WHERE cube_source = 1).
+                Object value = row.getIgnoreCase(columnName);
                 if(value != null) { value = value.toString(); }
                 return value;
             }

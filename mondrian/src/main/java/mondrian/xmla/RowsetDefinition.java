@@ -1451,6 +1451,32 @@ public enum RowsetDefinition {
         writeRowsetXmlSchemaBottom(writer);
     }
 
+    /**
+     * Writes the schema of a projection of this rowset: the given columns
+     * only, in the given order, as flat elements. A DMV query
+     * ({@code SELECT a, b FROM $SYSTEM.<rowset>}) describes exactly what it
+     * selected, as Analysis Services does; a client that checks the result
+     * against the columns it asked for (the Power BI Service) rejects a
+     * schema with others in it.
+     */
+    void writeRowsetXmlSchema(SaxWriter writer, Column[] columns) {
+        writeRowsetXmlSchemaTop(writer);
+        writeRowsetXmlSchemaRowDef(writer, columns);
+        writeRowsetXmlSchemaBottom(writer);
+    }
+
+    /**
+     * The column of this rowset with the given name, ignoring case, or null.
+     */
+    Column findColumn(String name) {
+        for (Column column : columnDefinitions) {
+            if (column.name.equalsIgnoreCase(name)) {
+                return column;
+            }
+        }
+        return null;
+    }
+
     protected void writeRowsetXmlSchemaTop(SaxWriter writer) {
         writer.startElement(
             "xsd:schema",
@@ -1513,11 +1539,15 @@ public enum RowsetDefinition {
     }
 
     protected void writeRowsetXmlSchemaRowDef(SaxWriter writer) {
+        writeRowsetXmlSchemaRowDef(writer, columnDefinitions);
+    }
+
+    void writeRowsetXmlSchemaRowDef(SaxWriter writer, Column[] columns) {
         writer.startElement(
             "xsd:complexType",
             "name", "row");
         writer.startElement("xsd:sequence");
-        for (Column column : columnDefinitions) {
+        for (Column column : columns) {
             final String name =
                 XmlaUtil.ElementNameEncoder.INSTANCE.encode(column.name);
             final String xsdType = column.type.columnType;
@@ -3009,11 +3039,15 @@ public enum RowsetDefinition {
                     serialize(buf, roleNames);
                     row.set(Roles.name, buf.toString());
 
-                    //If it is ROLAP - return when data was last changed or just current date time.
-                    //It could be Session start date
+                    // When the catalog's schema was loaded, as for
+                    // MDSCHEMA_CUBES.LAST_SCHEMA_UPDATE. It used to be the
+                    // current time, so a client checking whether the model
+                    // changed (the Power BI Service's cache refresh) saw a new
+                    // model on every call.
                     Format formatter =
                             new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
-                    String formattedDate = formatter.format(new Date());
+                    String formattedDate = formatter.format(
+                        getExtra(connection).getSchemaLoadDate(schema));
                     row.set(DateModified.name, formattedDate);
 
                     addRow(row, rows);
@@ -4577,7 +4611,10 @@ TODO: see above
                                     formatter.format(
                                             extra.getSchemaLoadDate(schema));
                             row.set(LastSchemaUpdate.name, formattedDate);
-                            //It could be a last source update. Now it's just current time.
+                            // The source data of a ROLAP cube can change at any
+                            // time without the server knowing, so "now" is the
+                            // honest answer: a client caching results by this
+                            // date re-reads them rather than showing stale ones.
                             formattedDate =
                                     formatter.format(new Date());
                             row.set(LastDataUpdate.name, formattedDate);
