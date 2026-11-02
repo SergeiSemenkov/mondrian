@@ -213,6 +213,17 @@ public class RolapNativeSql {
             }
 
             RolapAggregator aggregator = measure.getAggregator();
+            // The measure's own aggregate function name (aggregatorImplementation:
+            // ClickHouse's uniq, a Databricks metric view's MEASURE), as the
+            // segment SQL writes it (AbstractQuerySpec). Native filter and TopCount
+            // conditions used to write the plain aggregator instead, e.g.
+            // count(distinct ...) in a HAVING clause, which a metric view rejects
+            // and which on ClickHouse counted exactly where the cells used uniq.
+            String aggregatorImplementation =
+                measure.getStarMeasure() instanceof RolapStar.Measure
+                    ? ((RolapStar.Measure) measure.getStarMeasure())
+                        .getAggregatorImplementation()
+                    : null;
             String exprInner;
             // Use aggregate table to create condition if available
             if (aggStar != null
@@ -233,6 +244,9 @@ public class RolapNativeSql {
                     // sum, as a row can aggregate several facts
                     aggregator = (RolapAggregator) aggTableAggregator
                         .getRollup();
+                    // Rolling up an aggregate table's column is the rollup
+                    // aggregator's job, not the measure's own function.
+                    aggregatorImplementation = null;
                 }
             } else {
                 MondrianDef.Expression defExp =
@@ -241,7 +255,8 @@ public class RolapNativeSql {
                     ? "*" : defExp.getExpression(sqlQuery);
             }
 
-            String expr = aggregator.getExpression(exprInner);
+            String expr =
+                aggregator.getExpression(exprInner, aggregatorImplementation);
             if (dialect.getDatabaseProduct().getFamily()
                 == Dialect.DatabaseProduct.DB2)
             {
