@@ -2707,7 +2707,65 @@ public enum RowsetDefinition {
     static class DiscoverXmlMetadataRowset extends Rowset {
         private static final String ASSL_NAMESPACE =
             "http://schemas.microsoft.com/analysisservices/2003/engine";
+        // Properties added to ASSL after 2005 live in versioned namespaces;
+        // AMO rejects them in the 2003 one ("The 'ServerMode' element in the
+        // '.../2003/engine' namespace is unexpected").
+        private static final String ASSL_300 =
+            "http://schemas.microsoft.com/analysisservices/2011/engine/300";
         private final Util.Functor1<Boolean, Catalog> catalogNameCond;
+
+        /** The catalogs the caller can see, as ASSL database objects. */
+        private XmlElement[] databaseReferences(OlapConnection connection)
+            throws XmlaException
+        {
+            Format formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
+            String now = formatter.format(new Date());
+            List<XmlElement> databases = new ArrayList<XmlElement>();
+            for (Catalog catalog : catIter(connection)) {
+                databases.add(
+                    databaseElement(catalog, connection, formatter, now, false));
+            }
+            return databases.toArray(new XmlElement[0]);
+        }
+
+        /**
+         * A catalog as an ASSL {@code <Database>}: its own document (with the
+         * namespace) or an element of a server's {@code <Databases>}.
+         */
+        private static XmlElement databaseElement(
+            Catalog catalog, OlapConnection connection, Format formatter,
+            String now, boolean topLevel)
+        {
+            Date loaded = null;
+            try {
+                for (Schema schema : catalog.getSchemas()) {
+                    loaded = getExtra(connection).getSchemaLoadDate(schema);
+                    break;
+                }
+            } catch (OlapException e) {
+                throw new RuntimeException(e);
+            }
+            String schemaUpdate = loaded == null ? now : formatter.format(loaded);
+            return new XmlElement("Database",
+                topLevel
+                    ? new Object[] {"xmlns", ASSL_NAMESPACE}
+                    : null,
+                new XmlElement[] {
+                    new XmlElement("Name", null, catalog.getName()),
+                    new XmlElement("ID", null, catalog.getName()),
+                    new XmlElement("CreatedTimestamp", null, schemaUpdate),
+                    new XmlElement("LastSchemaUpdate", null, schemaUpdate),
+                    // ROLAP: the source data can change at any time without the
+                    // server knowing, so it is "now", as
+                    // MDSCHEMA_CUBES.LAST_DATA_UPDATE.
+                    new XmlElement("LastProcessed", null, now),
+                    new XmlElement("State", null, "Processed"),
+                    new XmlElement("LastUpdate", null, now),
+                    // No CompatibilityLevel: a multidimensional database has
+                    // none, and the Tabular object model (the AMO Power BI
+                    // ships) refuses anything below 1200.
+                });
+        }
 
         DiscoverXmlMetadataRowset(XmlaRequest request, XmlaHandler handler) {
             super(DISCOVER_XML_METADATA, request, handler);
@@ -2763,38 +2821,17 @@ public enum RowsetDefinition {
                 Format formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
                 String now = formatter.format(new Date());
                 for (Catalog catalog : catIter(connection, catalogNameCond)) {
-                    Date loaded = null;
-                    try {
-                        for (Schema schema : catalog.getSchemas()) {
-                            loaded = getExtra(connection).getSchemaLoadDate(schema);
-                            break;
-                        }
-                    } catch (OlapException e) {
-                        throw new RuntimeException(e);
-                    }
-                    String schemaUpdate =
-                        loaded == null ? now : formatter.format(loaded);
                     Row row = new Row();
-                    row.set(METADATA.name, new XmlElement("Database",
-                        new Object[] {"xmlns", ASSL_NAMESPACE},
-                        new XmlElement[] {
-                            new XmlElement("Name", null, catalog.getName()),
-                            new XmlElement("ID", null, catalog.getName()),
-                            new XmlElement("CreatedTimestamp", null, schemaUpdate),
-                            new XmlElement("LastSchemaUpdate", null, schemaUpdate),
-                            // ROLAP: the source data can change at any time
-                            // without the server knowing, so it is "now", as
-                            // MDSCHEMA_CUBES.LAST_DATA_UPDATE.
-                            new XmlElement("LastProcessed", null, now),
-                            new XmlElement("State", null, "Processed"),
-                            new XmlElement("LastUpdate", null, now),
-                            new XmlElement("CompatibilityLevel", null, "1100"),
-                        }));
+                    row.set(METADATA.name,
+                        databaseElement(catalog, connection, formatter, now, true));
                     addRow(row, rows);
                 }
             }
             else if(objectType == null
-                    && contentProperty != null && contentProperty.equals("SchemaData")) {
+                    && (contentProperty == null || contentProperty.equals("SchemaData"))) {
+                // No Content property means SchemaData, the XML/A default. AMO
+                // (Server.Connect) sends none; it got an empty rowset and failed
+                // with "The object does not exist or read permissions are needed".
                 Row row = new Row();
 
                 Format formatter = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
@@ -2812,17 +2849,22 @@ public enum RowsetDefinition {
                 }
 
                 XmlElement xmlServerXmlElement = new XmlElement("Server",
-                        new Object[] {"xmlns", ASSL_NAMESPACE}, new XmlElement[]{
+                        new Object[] {"xmlns", ASSL_NAMESPACE,
+                            "xmlns:ddl300", ASSL_300},
+                        new XmlElement[]{
                         new XmlElement("Name", null, hostName),
                         new XmlElement("ID", null, hostName),
                         new XmlElement("CreatedTimestamp", null, formattedDate),
                         new XmlElement("LastSchemaUpdate", null, formattedDate),
                         new XmlElement("Version", null, PropertyDefinition.providerVersion()),
-                        new XmlElement("Edition", null, "OpenSource"),
-                        new XmlElement("EditionID", null, "1"),
-                        new XmlElement("ServerMode", null, "Multidimensional"),
-                        new XmlElement("ServerLocation", null, "OnPremise"),
-                        new XmlElement("DefaultCompatibilityLevel", null, "1100"),
+                        // An Analysis Services edition and its id: AMO reads
+                        // both into typed fields, and "OpenSource" / 1 are not
+                        // values it knows.
+                        new XmlElement("Edition", null, "Developer64"),
+                        new XmlElement("EditionID", null, "2176971986"),
+                        new XmlElement("ddl300:ServerMode", null, "Multidimensional"),
+                        new XmlElement("Databases", null,
+                            databaseReferences(connection)),
                 });
                 row.set(METADATA.name, xmlServerXmlElement);
                 addRow(row, rows);
