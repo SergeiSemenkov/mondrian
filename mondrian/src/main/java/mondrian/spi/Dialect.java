@@ -860,7 +860,8 @@ public interface Dialect {
         MARIADB,
         PDI,
         GOOGLEBIGQUERY,
-        SNOWFLAKE;
+        SNOWFLAKE,
+        DATABRICKS;
 
         /**
          * Return the root of the family of products this database product
