@@ -1080,6 +1080,12 @@ public class JdbcDialectImpl implements Dialect {
                 // DB2 on NT returns "DB2/NT"
                 return DatabaseProduct.DB2;
             }
+        } else if (upperProductName.indexOf("DATABRICKS") >= 0
+            || upperProductName.replace(" ", "").equals("SPARKSQL"))
+        {
+            // The Databricks JDBC drivers, both the Simba-based one and the
+            // open-source com.databricks:databricks-jdbc, report "SparkSQL".
+            return DatabaseProduct.DATABRICKS;
         } else if (upperProductName.indexOf("FIREBIRD") >= 0) {
             return DatabaseProduct.FIREBIRD;
         } else if (upperProductName.equals("HIVE")

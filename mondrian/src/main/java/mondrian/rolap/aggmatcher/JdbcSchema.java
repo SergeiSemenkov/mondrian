@@ -1295,14 +1295,15 @@ public class JdbcSchema {
             conn = getDataSource().getConnection();
             final DatabaseMetaData databaseMetaData = conn.getMetaData();
 
+            // Placeholders resolved, as for the JDBC URL (mondrian.util.Placeholders).
             final String scanSchemaProp =
-                connectInfo.get(
+                mondrian.util.Placeholders.resolve(connectInfo.get(
                     RolapConnectionProperties.AggregateScanSchema.name(),
-                    getSchemaName());
+                    getSchemaName()));
             final String scanCatalogProp =
-                connectInfo.get(
+                mondrian.util.Placeholders.resolve(connectInfo.get(
                     RolapConnectionProperties.AggregateScanCatalog.name(),
-                    getCatalogName());
+                    getCatalogName()));
 
             String[] tableTypes = { "TABLE", "VIEW" };
             if (databaseMetaData.getDatabaseProductName().toUpperCase().indexOf(
