@@ -4174,28 +4174,42 @@ TODO: see above
             mondrian.rolap.RolapConnection rolapConnection =
                     (mondrian.rolap.RolapConnection)
                             ((mondrian.olap4j.MondrianOlap4jConnection)connection).getMondrianConnection();
-            java.sql.Connection sqlConnection = rolapConnection.getDataSource().getConnection();
-            java.sql.DatabaseMetaData databaseMetaData = sqlConnection.getMetaData();
             String[] tableTypeRestriction = null;
             List<String> tableTypeRestrictionList = getRestriction(TableType);
             if(tableTypeRestrictionList != null) {
                 tableTypeRestriction = tableTypeRestrictionList.toArray(new String[0]);
             }
-            java.sql.ResultSet resultSet = databaseMetaData.getTables(null, null, null, tableTypeRestriction);
-//            java.sql.ResultSet resultSet = databaseMetaData.getTables(null, null, null, new String[]{"TABLE"});
-            while(resultSet.next()) {
+            // Scoped by the connect string's AggregateScanCatalog/AggregateScanSchema, the
+            // same "where to look for tables" the aggregate scan uses, so a deployment on a
+            // shared warehouse that grants one schema (Databricks: one schema of a client's
+            // catalog) lists only that schema. Without them every schema the credentials can
+            // see is listed, as before. The connection used to be left open.
+            // Placeholders resolved, so a datasources.xml can name the catalog as
+            // ${env:...} and keep a client's catalog name out of the file.
+            final String scanCatalog = mondrian.util.Placeholders.resolve(
+                    rolapConnection.getConnectInfo().get(
+                            mondrian.rolap.RolapConnectionProperties.AggregateScanCatalog.name()));
+            final String scanSchema = mondrian.util.Placeholders.resolve(
+                    rolapConnection.getConnectInfo().get(
+                            mondrian.rolap.RolapConnectionProperties.AggregateScanSchema.name()));
+            try (java.sql.Connection sqlConnection =
+                         rolapConnection.getDataSource().getConnection();
+                 java.sql.ResultSet resultSet = sqlConnection.getMetaData().getTables(
+                         scanCatalog, scanSchema, null, tableTypeRestriction)) {
+                while (resultSet.next()) {
 
-                final String tableCatalog = resultSet.getString("TABLE_CAT");
-                final String tableSchema = resultSet.getString("TABLE_SCHEM");
-                final String tableName = resultSet.getString("TABLE_NAME");
-                final String tableType = resultSet.getString("TABLE_TYPE");
+                    final String tableCatalog = resultSet.getString("TABLE_CAT");
+                    final String tableSchema = resultSet.getString("TABLE_SCHEM");
+                    final String tableName = resultSet.getString("TABLE_NAME");
+                    final String tableType = resultSet.getString("TABLE_TYPE");
 
-                Row row = new Row();
-                row.set(TableCatalog.name, tableCatalog);
-                row.set(TableSchema.name, tableSchema);
-                row.set(TableName.name, tableName);
-                row.set(TableType.name, tableType);
-                addRow(row, rows);
+                    Row row = new Row();
+                    row.set(TableCatalog.name, tableCatalog);
+                    row.set(TableSchema.name, tableSchema);
+                    row.set(TableName.name, tableName);
+                    row.set(TableType.name, tableType);
+                    addRow(row, rows);
+                }
             }
         }
 
