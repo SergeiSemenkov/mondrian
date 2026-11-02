@@ -181,6 +181,9 @@ public abstract class XmlaServlet
         Enumeration.ResponseMimeType mimeType =
             Enumeration.ResponseMimeType.SOAP;
 
+        // Outside the try, so the finally can close the request's session.
+        Map<String, Object> context = new HashMap<String, Object>();
+
         try {
             if (charEncoding != null) {
                 try {
@@ -196,8 +199,6 @@ public abstract class XmlaServlet
             }
 
             response.setContentType(mimeType.getMimeType());
-
-            Map<String, Object> context = new HashMap<String, Object>();
 
             try {
                 if (LOGGER.isDebugEnabled()) {
@@ -409,31 +410,6 @@ public abstract class XmlaServlet
                     marshallSoapMessage(response, responseSoapParts, mimeType);
                 }
             }
-
-            // Session bookkeeping runs after the response has been written, so it must not be
-            // able to fail the request: there is no way to report an error to a client whose
-            // body is already on the wire, and trying to do so corrupts it. A
-            // ConcurrentModificationException from Session.close used to escape here and reach
-            // the outer catch below, which appended a SOAP fault to the finished response -- the
-            // client then saw two concatenated documents and reported "a text/xml declaration
-            // may occur only at the very beginning of input" (2026-10-09; the race itself is
-            // fixed in MondrianServerImpl.getStatements).
-            try {
-                String sessionId = (String)context.get(CONTEXT_XMLA_SESSION_ID);
-                if(sessionId != null) {
-                    if(CONTEXT_XMLA_SESSION_STATE_END.equals(
-                            context.get(CONTEXT_XMLA_SESSION_STATE))) {
-                        mondrian.server.Session.close(sessionId);
-                    }
-                    else {
-                        mondrian.server.Session.checkIn(sessionId);
-                    }
-                }
-            } catch (Throwable t) {
-                LOGGER.error(
-                    "Error in XML/A session bookkeeping after the response was sent; the "
-                    + "response itself is unaffected", t);
-            }
         } catch (Throwable t) {
             LOGGER.error("Unknown Error when handling XML/A message", t);
             // Only report a fault if nothing has been sent yet. Once the response is committed,
@@ -448,6 +424,45 @@ public abstract class XmlaServlet
                 handleFault(response, responseSoapParts, phase, t);
                 marshallSoapMessage(response, responseSoapParts, mimeType);
             }
+        } finally {
+            finishSession(context);
+        }
+    }
+
+    /**
+     * Closes the request's own session, or checks in the client's, once the
+     * response is out -- on every path, faults included. It used to run only
+     * after a successful response, so each failed request without a session
+     * left its one-request session open until the idle reaper took it, up to
+     * {@code mondrian.server.IdleOrphanSessionTimeout} later.
+     *
+     * <p>It must not be able to fail the request: there is no way to report an
+     * error to a client whose body is already on the wire, and trying to do so
+     * corrupts it. A ConcurrentModificationException from Session.close used to
+     * escape into the catch above, which appended a SOAP fault to the finished
+     * response -- the client then saw two concatenated documents and reported
+     * "a text/xml declaration may occur only at the very beginning of input"
+     * (2026-10-09; the race itself is fixed in
+     * MondrianServerImpl.getStatements).
+     */
+    private static void finishSession(Map<String, Object> context) {
+        try {
+            String sessionId = (String) context.get(CONTEXT_XMLA_SESSION_ID);
+            if (sessionId == null) {
+                return;
+            }
+            if (CONTEXT_XMLA_SESSION_STATE_END.equals(
+                    context.get(CONTEXT_XMLA_SESSION_STATE))) {
+                mondrian.server.Session.close(sessionId);
+            } else if (mondrian.server.Session.getWithoutCheck(sessionId) != null) {
+                // A request naming a session that no longer exists fails in
+                // the header; there is nothing to check in.
+                mondrian.server.Session.checkIn(sessionId);
+            }
+        } catch (Throwable t) {
+            LOGGER.error(
+                "Error in XML/A session bookkeeping after the response was sent; the "
+                + "response itself is unaffected", t);
         }
     }
 

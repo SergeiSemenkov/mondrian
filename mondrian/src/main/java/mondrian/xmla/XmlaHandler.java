@@ -1048,11 +1048,19 @@ public class XmlaHandler {
         // Handle execute
         QueryResult result = null;
 
+        // Connections this method opens for itself (to parse the statement, to find
+        // the session to cancel, to reach the repository or the schema), closed in
+        // the finally below. They used to be left open: the server's connection map
+        // holds them weakly, so they lingered until a full GC and every Execute
+        // added one to emondrian_connections.
+        final List<OlapConnection> ownConnections = new ArrayList<OlapConnection>();
+
         try {
 
             if(defaultXmlaRequest.getCommand().toUpperCase().equals("CANCEL")){
                 try {
                     final OlapConnection connection1 = getConnection(request, Collections.<String, String>emptyMap());
+                    ownConnections.add(connection1);
                     final mondrian.rolap.RolapConnection rolapConnection1 =
                             ((mondrian.olap4j.MondrianOlap4jConnection) connection1).getMondrianConnection();
 
@@ -1099,6 +1107,7 @@ public class XmlaHandler {
                             request,
                             ServerPermissions.Capability.DATABASE_MANAGE);
                     final OlapConnection connection1 = getConnection(request, Collections.<String, String>emptyMap());
+                    ownConnections.add(connection1);
                     final mondrian.rolap.RolapConnection rolapConnection1 =
                             ((mondrian.olap4j.MondrianOlap4jConnection) connection1).getMondrianConnection();
                     final mondrian.olap.MondrianServer mondrianServer =
@@ -1114,6 +1123,7 @@ public class XmlaHandler {
                     final ServerObject serverObject = ((mondrian.xmla.impl.DefaultXmlaRequest) request).getServerObject();
                     if (serverObject != null) {
                         final OlapConnection connection1 = getConnection(null, serverObject.getDatabaseID(), null);
+                        ownConnections.add(connection1);
 
                         try {
 
@@ -1194,6 +1204,7 @@ public class XmlaHandler {
             }
             else if(defaultXmlaRequest.getCommand().toUpperCase().equals("STATEMENT")) {
                 final OlapConnection connection = getConnection(request, Collections.<String, String>emptyMap());
+                ownConnections.add(connection);
                 final mondrian.rolap.RolapConnection rolapConnection =
                         ((mondrian.olap4j.MondrianOlap4jConnection) connection).getMondrianConnection();
                 final String mdx = request.getStatement();
@@ -1362,6 +1373,13 @@ public class XmlaHandler {
             if (result != null) {
                 try {
                     result.close();
+                } catch (SQLException e) {
+                    // ignore
+                }
+            }
+            for (OlapConnection ownConnection : ownConnections) {
+                try {
+                    ownConnection.close();
                 } catch (SQLException e) {
                     // ignore
                 }
