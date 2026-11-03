@@ -130,6 +130,15 @@ public abstract class DimensionBase
                     return oeLevel; // level match overrides hierarchy match
                 }
             }
+            if (oe == null) {
+                // An attribute hierarchy that holds the dimension's own
+                // unique name prefixes its members with [Dim], so [Dim].[X]
+                // has to find them even when it is not the default hierarchy.
+                final Hierarchy sameName = lookupSameNameHierarchy();
+                if (sameName != null && sameName != getHierarchy()) {
+                    oe = sameName.lookupChild(schemaReader, s, matchType);
+                }
+            }
             return oe;
         } else {
             // New (SSAS-compatible) behavior. If there is no matching
@@ -151,6 +160,15 @@ public abstract class DimensionBase
 
     public boolean isHighCardinality() {
         return this.highCardinality;
+    }
+
+    private Hierarchy lookupSameNameHierarchy() {
+        for (Hierarchy hierarchy : hierarchies) {
+            if (hierarchy.getUniqueName().equals(getUniqueName())) {
+                return hierarchy;
+            }
+        }
+        return null;
     }
 
     private Hierarchy lookupHierarchy(Id.NameSegment s) {
