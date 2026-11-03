@@ -451,12 +451,17 @@ public abstract class XmlaServlet
             if (sessionId == null) {
                 return;
             }
+            if (mondrian.server.Session.getWithoutCheck(sessionId) == null) {
+                // Nothing to check in or close. A request naming a session
+                // that no longer exists fails in the header; an EndSession for
+                // one -- Power BI ending the sessions it held before a server
+                // restart -- has nothing left to end.
+                return;
+            }
             if (CONTEXT_XMLA_SESSION_STATE_END.equals(
                     context.get(CONTEXT_XMLA_SESSION_STATE))) {
                 mondrian.server.Session.close(sessionId);
-            } else if (mondrian.server.Session.getWithoutCheck(sessionId) != null) {
-                // A request naming a session that no longer exists fails in
-                // the header; there is nothing to check in.
+            } else {
                 mondrian.server.Session.checkIn(sessionId);
             }
         } catch (Throwable t) {

@@ -133,7 +133,10 @@ public class JdbcDialectImpl implements Dialect {
         Map typeMapInitial = new HashMap<Types, SqlStatement.Type>();
         typeMapInitial.put(Types.SMALLINT, SqlStatement.Type.INT);
         typeMapInitial.put(Types.INTEGER, SqlStatement.Type.INT);
-        typeMapInitial.put(Types.BOOLEAN, SqlStatement.Type.INT);
+        // Types.BOOLEAN is left out, so it is read as an object, a Boolean, the
+        // way Types.BIT already was. Read as INT, a boolean key became 0/1: the
+        // members' captions said 0/1, and a predicate on one quoted 0 as a
+        // BOOLEAN literal and failed ("Illegal BOOLEAN literal").
         typeMapInitial.put(Types.DOUBLE, SqlStatement.Type.DOUBLE);
         typeMapInitial.put(Types.FLOAT, SqlStatement.Type.DOUBLE);
         typeMapInitial.put(Types.BIGINT, SqlStatement.Type.DOUBLE);

@@ -1006,7 +1006,13 @@ public class XmlaHandler {
         }
     }
 
-    private ArrayList<XmlaRequest> currentRequests = new ArrayList<XmlaRequest>();
+    /**
+     * Requests in progress, for CANCEL to mark. Every Execute adds and removes
+     * itself while a CANCEL iterates, concurrently: a plain ArrayList threw
+     * ConcurrentModificationException under Power BI's parallel queries.
+     */
+    private final List<XmlaRequest> currentRequests =
+        new java.util.concurrent.CopyOnWriteArrayList<XmlaRequest>();
 
     private void checkedCanceled(XmlaRequest request) {
         String canceled = request.getProperties().get("CANCELED");

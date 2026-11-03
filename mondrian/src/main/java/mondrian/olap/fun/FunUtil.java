@@ -486,6 +486,11 @@ public class FunUtil extends Util {
       return FunUtil.compareValues(
         ( (Number) value0 ).doubleValue(),
         ( (Number) value1 ).doubleValue() );
+    } else if ( value0 instanceof Boolean ) {
+      // A boolean member key (Types.BOOLEAN is read as Boolean since .65), which
+      // Power BI sorts by: Order(..., <hierarchy>.CurrentMember.Properties("Key"), BASC).
+      // false before true, as Boolean orders them.
+      return ( (Boolean) value0 ).compareTo( (Boolean) value1 );
     } else if ( value0 instanceof Date ) {
       return ( (Date) value0 ).compareTo( (Date) value1 );
     } else if ( value0 instanceof OrderKey ) {
