@@ -82,9 +82,11 @@ public class MondrianServerImpl
     private final Map<Integer, RolapConnection> connectionMap =
          // We use a reference map here because the value
          // is what needs to be week, not the key, as it
-         // would be the case with a WeakHashMap.
+         // would be the case with a WeakHashMap. The key is a boxed id
+         // nothing else holds, so a weak key let GC drop the entry of a
+         // connection still open (and the activity metrics lost it).
         Collections.synchronizedMap(
-            new ReferenceMap(ReferenceMap.WEAK, ReferenceMap.WEAK));
+            new ReferenceMap(ReferenceMap.HARD, ReferenceMap.WEAK));
 
     /**
      * Map of open statements, by id. Statements are added just after

@@ -98,9 +98,14 @@ public abstract class ConnectionBase implements Connection {
             mondrian.trace.Tracing.start("query.parse", true);
         span.set("query.language", mondrian.trace.Tracing.language(query));
         try {
-            return
+            final QueryPart queryPart =
                 parser.parseInternal(
                     statement, query, debug, funTable, strictValidation);
+            if (queryPart instanceof Query) {
+                ((Query) queryPart).setLanguage(
+                    mondrian.trace.Tracing.language(query));
+            }
+            return queryPart;
         } catch (Exception e) {
             span.error(e);
             throw MondrianResource.instance().FailedToParseQuery.ex(query, e);

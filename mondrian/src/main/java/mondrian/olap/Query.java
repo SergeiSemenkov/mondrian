@@ -171,6 +171,13 @@ public class Query extends QueryPart {
         new ArrayList<ScopedNamedSet>();
     private boolean ownStatement;
 
+    /**
+     * "MDX" or "DAX": the language the query was written in, for the query
+     * metrics. A DAX query is compiled into this same object model, so
+     * nothing else in it tells the two apart.
+     */
+    private String language = "MDX";
+
   /**
    * Creates a Query.
    */
@@ -419,7 +426,7 @@ public class Query extends QueryPart {
         "CloneDoesntDeclareCloneNotSupportedException"
     })
     public Query clone() {
-        return new Query(
+        final Query query = new Query(
             statement,
             cube,
             Formula.cloneArray(formulas),
@@ -428,6 +435,18 @@ public class Query extends QueryPart {
             cellProps,
             parameters.toArray(new Parameter[parameters.size()]),
             strictValidation);
+        query.language = language;
+        return query;
+    }
+
+    /** "MDX" or "DAX"; see {@link #setLanguage}. */
+    public String getLanguage() {
+        return language;
+    }
+
+    /** Records the language the query text was written in, "MDX" or "DAX". */
+    public void setLanguage(String language) {
+        this.language = language;
     }
 
     public Connection getConnection() {

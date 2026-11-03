@@ -700,6 +700,8 @@ public class RolapConnection extends ConnectionBase {
       cubeName = "null";
     }
 
+    final String language = query.getLanguage();
+
     try {
       mm.addListener( listener );
       // Check to see if we must punt
@@ -717,7 +719,7 @@ public class RolapConnection extends ConnectionBase {
         ;
       }
 
-      MdxMetrics.mdxRequests.labels(catalogName, cubeName, userId).inc();
+      MdxMetrics.mdxRequests.labels(catalogName, cubeName, userId, language).inc();
 
       final Locus locus = new Locus( execution, null, "Loading cells" );
       Locus.push( locus );
@@ -739,7 +741,7 @@ public class RolapConnection extends ConnectionBase {
         ( (RolapCube) query.getCube() ).clearCachedAggregations( true );
       }
       statement.end( execution );
-      MdxMetrics.resultCellsCount.labels(catalogName, cubeName, userId).inc(result.getCellsCount());
+      MdxMetrics.resultCellsCount.labels(catalogName, cubeName, userId, language).inc(result.getCellsCount());
       return result;
     } catch ( ResultLimitExceededException e ) {
       // query has been punted
@@ -755,12 +757,12 @@ public class RolapConnection extends ConnectionBase {
         catalogName, cubeName, userId,
         e instanceof mondrian.olap.QueryTimeoutException
           || e instanceof mondrian.olap.QueryCanceledException
-          ? "timeout_or_cancel" : "limit").inc();
+          ? "timeout_or_cancel" : "limit", language).inc();
       throw e;
     } catch ( Exception e ) {
       MdxMetrics.mdxFailed.labels(
         catalogName, cubeName, userId,
-        execution.isCancelOrTimeout() ? "timeout_or_cancel" : "error").inc();
+        execution.isCancelOrTimeout() ? "timeout_or_cancel" : "error", language).inc();
       try {
         if ( !execution.isCancelOrTimeout() ) {
           statement.end( execution );
@@ -784,10 +786,10 @@ public class RolapConnection extends ConnectionBase {
     } finally {
       mm.removeListener( listener );
       final long elapsed = execution.getElapsedMillis();
-      MdxMetrics.mdxCompleted.labels(catalogName, cubeName, userId).inc();
+      MdxMetrics.mdxCompleted.labels(catalogName, cubeName, userId, language).inc();
       // 1000.0, not 1000: long division truncated every query under a second to 0.
-      MdxMetrics.mdxExecutionTimeSum.labels(catalogName, cubeName, userId).inc(elapsed / 1000.0);
-      MdxMetrics.mdxDuration.labels(catalogName).observe(elapsed / 1000.0);
+      MdxMetrics.mdxExecutionTimeSum.labels(catalogName, cubeName, userId, language).inc(elapsed / 1000.0);
+      MdxMetrics.mdxDuration.labels(catalogName, language).observe(elapsed / 1000.0);
       if ( RolapUtil.MDX_LOGGER.isDebugEnabled() ) {
         RolapUtil.MDX_LOGGER.debug(
           currId + ": exec: " + elapsed + " ms" );
