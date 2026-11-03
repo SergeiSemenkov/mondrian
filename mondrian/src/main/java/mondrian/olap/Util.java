@@ -2138,16 +2138,25 @@ public class Util extends XOMUtil {
             segment = nameParts.get(nameParts.size() - 1);
         }
         if (segment.matches(member.getName())) {
-            return Util.equalName(
-                member.getHierarchy().getUniqueName(),
+            return namesHierarchy(
+                member.getHierarchy(),
                 Util.implode(nameParts.subList(0, nameParts.size() - 1)));
         } else if (member.isAll()) {
-            return Util.equalName(
-                member.getHierarchy().getUniqueName(),
-                Util.implode(nameParts));
+            return namesHierarchy(
+                member.getHierarchy(), Util.implode(nameParts));
         } else {
             return false;
         }
+    }
+
+    /**
+     * Whether a name prefix denotes a hierarchy: its unique name, or its
+     * [Dim.Hier] name, which differs from the unique name for an attribute
+     * hierarchy that holds its dimension's unique name.
+     */
+    private static boolean namesHierarchy(Hierarchy hierarchy, String name) {
+        return Util.equalName(hierarchy.getUniqueName(), name)
+            || Util.equalName(quoteMdxIdentifier(hierarchy.getName()), name);
     }
 
 

@@ -134,7 +134,7 @@ public abstract class DimensionBase
                 // An attribute hierarchy that holds the dimension's own
                 // unique name prefixes its members with [Dim], so [Dim].[X]
                 // has to find them even when it is not the default hierarchy.
-                final Hierarchy sameName = lookupSameNameHierarchy();
+                final Hierarchy sameName = getSameNameHierarchy();
                 if (sameName != null && sameName != getHierarchy()) {
                     oe = sameName.lookupChild(schemaReader, s, matchType);
                 }
@@ -162,7 +162,12 @@ public abstract class DimensionBase
         return this.highCardinality;
     }
 
-    private Hierarchy lookupSameNameHierarchy() {
+    /**
+     * Returns the hierarchy whose unique name is this dimension's own, or
+     * null. It is not the default hierarchy when an attribute hierarchy named
+     * after the dimension sits beside a user hierarchy.
+     */
+    public Hierarchy getSameNameHierarchy() {
         for (Hierarchy hierarchy : hierarchies) {
             if (hierarchy.getUniqueName().equals(getUniqueName())) {
                 return hierarchy;

@@ -227,6 +227,16 @@ public class Formula extends QueryPart {
                             } else {
                                 hierarchy = null;
                             }
+                        } else if (parent instanceof DimensionBase
+                            && ((DimensionBase) parent)
+                                .getSameNameHierarchy() != null)
+                        {
+                            // [Dim].[X] is the unique name of a member of the
+                            // hierarchy that holds [Dim], which need not be
+                            // the default one; define it there so that it can
+                            // be found again by the same name.
+                            hierarchy =
+                                ((DimensionBase) parent).getSameNameHierarchy();
                         } else {
                             hierarchy = parent.getHierarchy();
                         }
