@@ -791,6 +791,13 @@ public class RolapNativeSql {
                     : rolapLevel.nameExp == null
                         ? rolapLevel.keyExp
                         : rolapLevel.nameExp;
+                // As in MatchingSqlCompiler: a numeric key compared with a
+                // string that is not a number is a cast error in SQL, so
+                // StringComparisonSqlCompiler leaves that comparison to MDX.
+                lastPropertyIsNumericKey =
+                    expression == rolapLevel.keyExp
+                    && rolapLevel.getDatatype() != null
+                    && rolapLevel.getDatatype().isNumeric();
 
                 String sourceExp;
                 if (aggStar != null

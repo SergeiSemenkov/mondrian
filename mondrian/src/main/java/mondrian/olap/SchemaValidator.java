@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Structural checks over schema XML, run before the schema is turned into
@@ -146,7 +147,101 @@ public class SchemaValidator {
         collectVirtualCubes(root, findings);
         collectDimensionUsageAttributeMappings(root, findings);
         collectRoles(root, findings);
+        collectCubeChildOrder(root, findings);
         return findings;
+    }
+
+    /**
+     * The order of a {@code <Cube>}'s children, as Mondrian.xml declares it.
+     * Like a {@code <Role>}'s, they are read positionally: a child written after
+     * one of a later group is dropped without a word. A
+     * {@code <CalculatedMember>} after a {@code <DrillThroughAction>}, for
+     * instance, is simply not in the cube.
+     */
+    private static final List<Set<String>> CUBE_CHILD_ORDER = List.of(
+        Set.of("Annotations"),
+        Set.of("Table", "View", "Join", "InlineTable", "SchemaView"),
+        Set.of("WritebackTable"),
+        Set.of("Dimension", "DimensionUsage"),
+        Set.of("Measure"),
+        Set.of("CalculatedMember"),
+        Set.of("NamedSet"),
+        Set.of("DrillThroughAction"));
+
+    private static final List<Set<String>> VIRTUAL_CUBE_CHILD_ORDER = List.of(
+        Set.of("Annotations"),
+        Set.of("CubeUsages"),
+        Set.of("VirtualCubeDimension"),
+        Set.of("VirtualCubeMeasure"),
+        Set.of("CalculatedMember"),
+        Set.of("NamedSet"),
+        Set.of("DrillThroughAction"));
+
+    private static void collectCubeChildOrder(
+        Element root, List<Finding> findings)
+    {
+        for (Element child : elementChildren(root)) {
+            if ("Cube".equals(child.getTagName())) {
+                validateChildOrder(child, CUBE_CHILD_ORDER, findings);
+            } else if ("VirtualCube".equals(child.getTagName())) {
+                validateChildOrder(child, VIRTUAL_CUBE_CHILD_ORDER, findings);
+            }
+        }
+    }
+
+    /**
+     * Warns about each child of {@code parent} that comes after a child of a
+     * later group in {@code order}; children the order does not name are left
+     * to the parser.
+     */
+    private static void validateChildOrder(
+        Element parent, List<Set<String>> order, List<Finding> findings)
+    {
+        final String name = parent.getAttribute("name");
+        final String where = parent.getTagName()
+            + (name == null || name.isEmpty() ? "" : " '" + name + "'");
+        int highestRankSeen = -1;
+        String highestTagSeen = null;
+        for (Element child : elementChildren(parent)) {
+            final String tag = child.getTagName();
+            int rank = -1;
+            for (int i = 0; i < order.size(); i++) {
+                if (order.get(i).contains(tag)) {
+                    rank = i;
+                    break;
+                }
+            }
+            if (rank < 0) {
+                continue;
+            }
+            if (rank < highestRankSeen) {
+                final String childName = child.getAttribute("name");
+                findings.add(
+                    warn(where + ": <" + tag + ">"
+                        + (childName == null || childName.isEmpty()
+                            ? "" : " '" + childName + "'")
+                        + " comes after <" + highestTagSeen + "> and is"
+                        + " ignored when the schema is read. Inside a <"
+                        + parent.getTagName() + "> the children must appear"
+                        + " in the order " + describeOrder(order) + "."));
+                continue;
+            }
+            if (rank > highestRankSeen) {
+                highestRankSeen = rank;
+                highestTagSeen = tag;
+            }
+        }
+    }
+
+    private static String describeOrder(List<Set<String>> order) {
+        StringBuilder buf = new StringBuilder();
+        for (Set<String> group : order) {
+            if (buf.length() > 0) {
+                buf.append(", ");
+            }
+            buf.append(String.join("/", new TreeSet<>(group)));
+        }
+        return buf.toString();
     }
 
     /**

@@ -194,7 +194,8 @@ public abstract class RolapAggregationManager {
         }
 
 
-        request.setSubcubePredicate(evaluator.getSubcubePredicate());
+        request.setSubcubePredicate(
+            withoutMovedColumns(evaluator, evaluator.getSubcubePredicate()));
 
         if (CollectionUtils.isEmpty(evaluator.getAggregationLists())) {
             return request;
@@ -205,6 +206,41 @@ public abstract class RolapAggregationManager {
             return null;
         }
         return request;
+    }
+
+    /**
+     * The subcube predicate without the parts a calculated member has moved
+     * away from. The subcube restricts the cells the axes ask for -- a year
+     * outside it stays empty -- but a calculation that asks for another year
+     * itself (a prior year, a rolling window across the year boundary) gets
+     * that year, as an MDX subselect behaves in Analysis Services.
+     */
+    private static StarPredicate withoutMovedColumns(
+        RolapEvaluator evaluator, StarPredicate predicate)
+    {
+        if (predicate == null) {
+            return null;
+        }
+        final BitKey moved = evaluator.getColumnsMovedByCalculation(
+            evaluator.getMeasureCube(), predicate.getConstrainedColumnBitKey());
+        if (moved == null || moved.isEmpty()) {
+            return predicate;
+        }
+        if (predicate instanceof AndPredicate) {
+            final List<StarPredicate> kept = new ArrayList<StarPredicate>();
+            for (StarPredicate child : ((AndPredicate) predicate).getChildren()) {
+                if (!moved.isSuperSetOf(child.getConstrainedColumnBitKey())) {
+                    kept.add(child);
+                }
+            }
+            if (kept.size() == ((AndPredicate) predicate).getChildren().size()) {
+                return predicate;
+            }
+            return kept.isEmpty() ? null
+                : kept.size() == 1 ? kept.get(0) : new AndPredicate(kept);
+        }
+        return moved.isSuperSetOf(predicate.getConstrainedColumnBitKey())
+            ? null : predicate;
     }
 
     /**

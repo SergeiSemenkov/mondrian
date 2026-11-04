@@ -77,7 +77,15 @@ public class RolapNativeFilter extends RolapNativeSet {
       RolapNativeSql sql = new RolapNativeSql( sqlQuery, aggStar, getEvaluator(), args[0].getLevel() );
       String filterSql = sql.generateFilterCondition( filterExpr );
       if ( filterSql != null ) {
-        sqlQuery.addHaving( filterSql );
+        // A condition on no measure aggregates nothing, so it belongs in WHERE. HSQLDB (the
+        // bundled FoodMart) ignores a HAVING without an aggregate: Filter(<level>.Members, 1 = 0),
+        // or a condition on another hierarchy's current member that came out false, returned
+        // every member. Dialects that need aliases in HAVING keep it there.
+        if ( sql.getStoredMeasure() == null && !sqlQuery.getDialect().requiresHavingAlias() ) {
+          sqlQuery.addWhere( filterSql );
+        } else {
+          sqlQuery.addHaving( filterSql );
+        }
       }
 
       if ( getEvaluator().isNonEmpty() || isJoinRequired() ) {

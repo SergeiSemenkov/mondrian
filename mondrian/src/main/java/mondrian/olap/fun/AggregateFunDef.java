@@ -161,8 +161,12 @@ public class AggregateFunDef extends AbstractAggregateFunDef {
 
             // All that follows is logic for distinct count. It's not like the
             // other aggregators.
+            // An empty set aggregates to an empty cell, as Sum's rollup gives.
+            // DoubleNull is FunUtil's internal marker for "no value" among
+            // doubles; returned as the cell's value it reached clients as the
+            // number 1.2345E-8.
             if (tupleList.size() == 0) {
-                return DoubleNull;
+                return Util.nullValue;
             }
 
             // Optimize the list

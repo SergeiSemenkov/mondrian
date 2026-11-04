@@ -120,7 +120,27 @@ public class ValueColumnPredicate
     }
 
     public boolean evaluate(Object value) {
+        if (this.value instanceof Number && value instanceof Number
+            && !this.value.getClass().equals(value.getClass()))
+        {
+            // A subcube's "Key = 1998" arrives as the literal 1998.0 while the
+            // member's key is the Integer 1998 (or a Long, or a Double from
+            // ClickHouse): equals() never matches across Number types, so any
+            // cell with that member on its coordinate fell outside the subcube
+            // and came back empty.
+            return compareNumbers((Number) this.value, (Number) value) == 0;
+        }
         return this.value.equals(value);
+    }
+
+    private static int compareNumbers(Number a, Number b) {
+        try {
+            return new java.math.BigDecimal(a.toString())
+                .compareTo(new java.math.BigDecimal(b.toString()));
+        } catch (NumberFormatException e) {
+            // NaN or an infinity.
+            return Double.compare(a.doubleValue(), b.doubleValue());
+        }
     }
 
     public void describe(StringBuilder buf) {

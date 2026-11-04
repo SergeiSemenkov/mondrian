@@ -92,6 +92,17 @@ public class RolapEvaluator implements Evaluator {
   private int calculationCount;
 
   /**
+   * The members of the cell being evaluated, as they were when the outermost
+   * calculated member started, and how many aggregation lists there were then;
+   * null outside any calculated member. A subcube restricts the cell's own
+   * coordinates, the ones the axes put there, but not a coordinate a
+   * calculation moves to: the prior year of a ParallelPeriod, the months of a
+   * YTD. See {@link #getColumnsMovedByCalculation}.
+   */
+  private RolapMember[] calcBaseMembers;
+  private int calcBaseAggregationCount;
+
+  /**
    * List of lists of tuples or members, rarely used, but overrides the ordinary dimensional context if set when a cell
    * value comes to be evaluated.
    */
@@ -156,6 +167,8 @@ public class RolapEvaluator implements Evaluator {
     currentMembers = parent.currentMembers.clone();
     calculations = parent.calculations.clone();
     calculationCount = parent.calculationCount;
+    calcBaseMembers = parent.calcBaseMembers;
+    calcBaseAggregationCount = parent.calcBaseAggregationCount;
     slicerMembers = new ArrayList<Member>( parent.slicerMembers );
     slicerMembersByHierarchy = new HashMap<Hierarchy, Set<Member>>( parent.slicerMembersByHierarchy );
     slicerTuples = parent.slicerTuples;
@@ -806,6 +819,11 @@ public class RolapEvaluator implements Evaluator {
         }
     }
     final int savepoint = savepoint();
+    final boolean outermost = calcBaseMembers == null;
+    if ( outermost ) {
+      calcBaseMembers = currentMembers.clone();
+      calcBaseAggregationCount = aggregationLists == null ? 0 : aggregationLists.size();
+    }
     maxSolveMember.setContextIn( this );
     final Calc calc = maxSolveMember.getCompiledExpression( root );
     final Object o;
@@ -813,6 +831,9 @@ public class RolapEvaluator implements Evaluator {
       o = calc.evaluate( this );
     } finally {
       restore( savepoint );
+      if ( outermost ) {
+        calcBaseMembers = null;
+      }
     }
     if ( o == Util.nullValue ) {
       return null;
@@ -1424,6 +1445,47 @@ public class RolapEvaluator implements Evaluator {
     }
 
     abstract void execute( RolapEvaluator evaluator );
+  }
+
+  /**
+   * The star columns of every coordinate a calculated member has moved the
+   * cell to, and of every member a calculation aggregates over; null when the
+   * cell is not being evaluated inside a calculated member.
+   */
+  public BitKey getColumnsMovedByCalculation( RolapCube baseCube, BitKey template ) {
+    if ( calcBaseMembers == null ) {
+      return null;
+    }
+    BitKey moved = template.emptyCopy();
+    for ( int i = 0; i < currentMembers.length; i++ ) {
+      final RolapMember member = currentMembers[i];
+      if ( member != calcBaseMembers[i] && !member.isAll() && !member.isMeasure() && !member.isCalculated() ) {
+        addLevelColumns( member, baseCube, moved );
+      }
+    }
+    if ( aggregationLists != null ) {
+      for ( int i = calcBaseAggregationCount; i < aggregationLists.size(); i++ ) {
+        for ( List<Member> tuple : aggregationLists.get( i ) ) {
+          for ( Member member : tuple ) {
+            if ( !member.isAll() && !member.isMeasure() && !member.isCalculated() ) {
+              addLevelColumns( member, baseCube, moved );
+            }
+          }
+        }
+      }
+    }
+    return moved;
+  }
+
+  private static void addLevelColumns( Member member, RolapCube baseCube, BitKey into ) {
+    for ( Level level = member.getLevel(); level != null && !level.isAll(); level = level.getParentLevel() ) {
+      if ( level instanceof RolapCubeLevel ) {
+        final RolapStar.Column column = ( (RolapCubeLevel) level ).getBaseStarKeyColumn( baseCube );
+        if ( column != null ) {
+          into.set( column.getBitPosition() );
+        }
+      }
+    }
   }
 
   public StarPredicate getSubcubePredicate() {

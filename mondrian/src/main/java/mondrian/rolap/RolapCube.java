@@ -1282,8 +1282,10 @@ public class RolapCube extends CubeBase {
 
         // Check the members individually, and generate SQL.
         final Set<String> fqNames = new LinkedHashSet<String>();
+        final Set<Integer> usedOrdinals = usedMeasureOrdinals(xmlCalcMembers, cube);
         for (int i = 0; i < xmlCalcMembers.size(); i++) {
-            preCalcMember(xmlCalcMembers, i, buf, cube, errOnDups, fqNames);
+            preCalcMember(
+                xmlCalcMembers, i, buf, cube, errOnDups, fqNames, usedOrdinals);
         }
 
         // Check the named sets individually (for uniqueness) and generate SQL.
@@ -1422,13 +1424,61 @@ public class RolapCube extends CubeBase {
         memberList.add(member);
     }
 
+    /**
+     * Returns the ordinals taken before automatic ones are assigned: those of
+     * the measures already in the cube, and the explicit MEMBER_ORDINAL of each
+     * calculated member about to be added.
+     */
+    private static Set<Integer> usedMeasureOrdinals(
+        List<MondrianDef.CalculatedMember> xmlCalcMembers,
+        RolapCube cube)
+    {
+        final Set<Integer> used = new HashSet<Integer>();
+        for (RolapMember measure
+            : cube.measuresHierarchy.getMemberReader().getMembers())
+        {
+            used.add(measure.getOrdinal());
+        }
+        for (MondrianDef.CalculatedMember xmlCalcMember : xmlCalcMembers) {
+            if (xmlCalcMember.memberProperties == null) {
+                continue;
+            }
+            for (MondrianDef.CalculatedMemberProperty xmlProperty
+                : xmlCalcMember.memberProperties)
+            {
+                if (!Property.MEMBER_ORDINAL.getName().equals(xmlProperty.name)) {
+                    continue;
+                }
+                String text = xmlProperty.value != null
+                    ? xmlProperty.value : xmlProperty.expression;
+                if (text == null) {
+                    continue;
+                }
+                text = text.trim();
+                if (text.length() > 1
+                    && (text.startsWith("\"") || text.startsWith("'"))
+                    && text.charAt(text.length() - 1) == text.charAt(0))
+                {
+                    text = text.substring(1, text.length() - 1).trim();
+                }
+                try {
+                    used.add(Integer.valueOf(text));
+                } catch (NumberFormatException e) {
+                    Util.discard(e);
+                }
+            }
+        }
+        return used;
+    }
+
     private void preCalcMember(
         List<MondrianDef.CalculatedMember> xmlCalcMembers,
         int j,
         StringBuilder buf,
         RolapCube cube,
         boolean errOnDup,
-        Set<String> fqNames)
+        Set<String> fqNames,
+        Set<Integer> usedOrdinals)
     {
         MondrianDef.CalculatedMember xmlCalcMember = xmlCalcMembers.get(j);
 
@@ -1583,13 +1633,20 @@ public class RolapCube extends CubeBase {
         Util.quoteMdxIdentifier(Property.MEMBER_SCOPE.name, buf);
         buf.append(" = 'CUBE'");
 
-        // Assign the member an ordinal higher than all of the stored measures.
+        // Assign the member an ordinal higher than all of the stored measures,
+        // stepping over any ordinal already taken: another member's explicit
+        // MEMBER_ORDINAL used to collide with an automatic one, and the cube
+        // then failed to load with "Ordinal N is not unique".
         if (!propNames.contains(Property.MEMBER_ORDINAL.getName())) {
+            int ordinal = measureCount + j;
+            while (!usedOrdinals.add(ordinal)) {
+                ordinal++;
+            }
             buf.append(",")
                 .append(Util.nl)
                 .append(Property.MEMBER_ORDINAL)
                 .append(" = ")
-                .append(measureCount + j);
+                .append(ordinal);
         }
         buf.append(Util.nl);
     }

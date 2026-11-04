@@ -3005,7 +3005,8 @@ public class Query extends QueryPart {
             return null;
         }
         if (!reference.forceStringLiteral) {
-            return new ValueColumnPredicate(reference.column, value);
+            return new ValueColumnPredicate(
+                reference.column, normalizeNumericLiteral(value));
         }
         // .Name / .Caption comparisons are always string comparisons, so we
         // must quote the value as a SQL string literal regardless of the
@@ -3043,6 +3044,25 @@ public class Query extends QueryPart {
                 }
             }
         };
+    }
+
+    /**
+     * A numeric literal in its shortest form: 1998.0 becomes 1998. A DAX key
+     * filter arrives as the literal 1998.0, and a predicate holding that value
+     * did not match the member 1998 once the member was set on the cell's own
+     * coordinate as well, e.g. by a tuple, so the cell came back empty.
+     */
+    private static Object normalizeNumericLiteral(Object value) {
+        if (!(value instanceof Number)) {
+            return value;
+        }
+        try {
+            java.math.BigDecimal number =
+                new java.math.BigDecimal(value.toString()).stripTrailingZeros();
+            return number.scale() < 0 ? number.setScale(0) : number;
+        } catch (NumberFormatException e) {
+            return value;
+        }
     }
 
     /** The value as a number, or null if it is not one. */
