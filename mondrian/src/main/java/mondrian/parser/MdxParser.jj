@@ -162,7 +162,10 @@ public class MdxParserImpl
             : null;
         if (argList != null) {
             if (left != null) {
-                // Method syntax: "x.foo(arg1, arg2)" or "x.foo()"
+                // Method syntax: "x.foo(arg1, arg2)" or "x.foo()". The list of
+                // "()" is immutable, and adding to it threw a bare
+                // UnsupportedOperationException ("[Gender].Members()").
+                argList = new ArrayList<Exp>(argList);
                 argList.add(0, left);
                 return new UnresolvedFunCall(
                     name, Syntax.Method, toExpArray(argList));
@@ -275,6 +278,9 @@ SKIP :
     | "\n"
     | "\r"
     | "\f"
+    // A no-break space, as a query copied from a web page or a document
+    // carries; it was a lexical error.
+    | "\u00a0"
 }
 
 // Comments

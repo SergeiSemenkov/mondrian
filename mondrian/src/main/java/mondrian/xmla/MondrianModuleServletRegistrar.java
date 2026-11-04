@@ -406,6 +406,15 @@ public class MondrianModuleServletRegistrar implements ServletContextListener {
         if (clazz.isInterface())                          return false;
         if (java.lang.reflect.Modifier.isAbstract(
                 clazz.getModifiers()))                    return false;
+        // A servlet is registered by its no-argument constructor. A module jar
+        // can bundle library servlets that take arguments (the MCP module's SDK
+        // transports); they are building blocks, not servlets to register, and
+        // were logged as a failed registration at every start.
+        try {
+            clazz.getConstructor();
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
         return true;
     }
 

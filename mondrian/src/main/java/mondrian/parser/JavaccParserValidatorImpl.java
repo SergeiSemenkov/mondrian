@@ -68,6 +68,8 @@ public class JavaccParserValidatorImpl implements MdxParserValidator {
             }
         } catch (ParseException e) {
             throw convertException(queryString, e);
+        } catch (TokenMgrError e) {
+            throw convertLexicalError(queryString, e);
         }
     }
 
@@ -92,6 +94,8 @@ public class JavaccParserValidatorImpl implements MdxParserValidator {
             }
         } catch (ParseException e) {
             throw convertException(queryString, e);
+        } catch (TokenMgrError e) {
+            throw convertLexicalError(queryString, e);
         }
     }
 
@@ -131,6 +135,24 @@ public class JavaccParserValidatorImpl implements MdxParserValidator {
             e = pe;
         }
         return Util.newError(e, "While parsing " + queryString);
+    }
+
+    /**
+     * A character the MDX lexer cannot read, or a bracket or quote left open,
+     * as a syntax error. JavaCC raises it as an Error, not an exception, so it
+     * used to pass every handler and reach the client as "Unknown Error".
+     */
+    private RuntimeException convertLexicalError(
+        String queryString,
+        TokenMgrError error)
+    {
+        String message = error.getMessage();
+        if (message != null && message.contains("<EOF>")) {
+            message += " (a [ or a quote is not closed)";
+        }
+        return Util.newError(
+            new MondrianException("Syntax error: " + message),
+            "While parsing " + queryString);
     }
 }
 
