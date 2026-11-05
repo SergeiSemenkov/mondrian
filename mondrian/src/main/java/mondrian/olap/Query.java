@@ -2546,6 +2546,16 @@ public class Query extends QueryPart {
                 + exp.getClass().getName() + " -> " + exp);
         }
 
+        // A virtual cube's cell is read from one base cube. A subselect on a
+        // dimension that base cube does not have cannot restrict it - there is
+        // no column to restrict - so it is left out, as an unrelated slicer
+        // member is for ValidMeasure. Building it anyway failed: an explicit
+        // member set with a NullPointerException on the missing column, Power
+        // BI's Filter(..., Key = ...) slicer form as an unsupported condition.
+        if (isUnrelatedToBaseCube(baseCube, exp)) {
+            return;
+        }
+
         FunCall funCall = (FunCall) exp;
         String funName = funCall.getFunName();
 
@@ -2644,6 +2654,51 @@ public class Query extends QueryPart {
             throw new UnsupportedOperationException(
                 "Unsupported function in subcube axis: " + funName);
         }
+    }
+
+    /**
+     * Whether every hierarchy of the set {@code exp} is absent from
+     * {@code baseCube}. False when there is no base cube (a regular cube's
+     * own predicates) or the hierarchies cannot be told.
+     */
+    private static boolean isUnrelatedToBaseCube(RolapCube baseCube, Exp exp) {
+        if (baseCube == null) {
+            return false;
+        }
+        Type type;
+        try {
+            type = exp.getType();
+        } catch (RuntimeException e) {
+            return false;
+        }
+        if (type instanceof SetType) {
+            type = ((SetType) type).getElementType();
+        }
+        List<Hierarchy> hierarchies = new ArrayList<Hierarchy>();
+        if (type instanceof MemberType) {
+            hierarchies.add(((MemberType) type).getHierarchy());
+        } else if (type instanceof TupleType) {
+            for (Type element : ((TupleType) type).elementTypes) {
+                if (!(element instanceof MemberType)) {
+                    return false;
+                }
+                hierarchies.add(((MemberType) element).getHierarchy());
+            }
+        }
+        if (hierarchies.isEmpty()) {
+            return false;
+        }
+        for (Hierarchy hierarchy : hierarchies) {
+            if (hierarchy == null || hierarchy.getDimension().isMeasures()) {
+                return false;
+            }
+            for (RolapHierarchy own : baseCube.getHierarchies()) {
+                if (own.getUniqueName().equals(hierarchy.getUniqueName())) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private int extractNonNegativeHeadCount(Exp countExp) {

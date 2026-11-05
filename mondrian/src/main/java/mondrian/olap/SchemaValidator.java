@@ -116,6 +116,15 @@ public class SchemaValidator {
         "name", "cubeName", "caption", "description", "visible", "usagePrefix",
         "foreignKey", "highCardinality", "table", "primaryKey", "source", "level");
 
+    private static final Set<String> VIRTUAL_CUBE_ATTRS = Set.of(
+        "name", "enabled", "defaultMeasure", "caption", "visible", "description");
+
+    private static final Set<String> VIRTUAL_CUBE_MEASURE_ATTRS = Set.of(
+        "cubeName", "name", "visible");
+
+    private static final Set<String> CUBE_USAGE_ATTRS = Set.of(
+        "cubeName", "ignoreUnrelatedDimensions");
+
     private static final Set<String> COLUMN_TAGS = Set.of(
         "KeyColumn", "NameColumn", "OrderByColumn", "ValueColumn", "ParentColumn");
 
@@ -795,11 +804,59 @@ public class SchemaValidator {
 
         for (Element virtualCube : childrenNamed(root, "VirtualCube")) {
             String virtualCubeName = attr(virtualCube, "name");
+            checkUnknownAttributes(virtualCube, VIRTUAL_CUBE_ATTRS,
+                "VirtualCube '" + virtualCubeName + "'", findings);
+            for (Element usages : childrenNamed(virtualCube, "CubeUsages")) {
+                for (Element usage : childrenNamed(usages, "CubeUsage")) {
+                    checkUnknownAttributes(usage, CUBE_USAGE_ATTRS,
+                        "VirtualCube '" + virtualCubeName + "', CubeUsage '"
+                        + attr(usage, "cubeName") + "'", findings);
+                }
+            }
+            for (Element measure
+                : childrenNamed(virtualCube, "VirtualCubeMeasure"))
+            {
+                validateVirtualCubeMeasure(measure, virtualCubeName, findings);
+            }
             for (Element reference
                 : childrenNamed(virtualCube, "VirtualCubeDimension"))
             {
                 validateVirtualCubeDimension(
                     reference, virtualCubeName, cubes, sharedDimensions, findings);
+            }
+        }
+    }
+
+    /**
+     * A VirtualCubeMeasure takes cubeName, name and visible only. The parser
+     * drops anything else without a word, and ignoreUnrelatedDimensions is
+     * the one authors put here most: it belongs on the base cube's CubeUsage.
+     */
+    private static void validateVirtualCubeMeasure(
+        Element measure, String virtualCubeName, List<Finding> findings)
+    {
+        String where = "VirtualCube '" + virtualCubeName + "', measure '"
+            + attr(measure, "name") + "'";
+        NamedNodeMap attributes = measure.getAttributes();
+        for (int i = 0; i < attributes.getLength(); i++) {
+            String name = attributes.item(i).getNodeName();
+            if (VIRTUAL_CUBE_MEASURE_ATTRS.contains(name)) {
+                continue;
+            }
+            if ("ignoreUnrelatedDimensions".equals(name)) {
+                findings.add(warn(
+                    where + " sets ignoreUnrelatedDimensions, which a"
+                    + " VirtualCubeMeasure does not have; the parser ignores it."
+                    + " It belongs on the base cube's usage, first in the"
+                    + " VirtualCube: <CubeUsages><CubeUsage cubeName=\""
+                    + attr(measure, "cubeName") + "\""
+                    + " ignoreUnrelatedDimensions=\"true\"/></CubeUsages>. It"
+                    + " acts on aggregations (Aggregate, Sum over a set), not on"
+                    + " a plain cell; for that, wrap the measure in ValidMeasure."));
+            } else {
+                findings.add(warn(
+                    where + " has unknown attribute '" + name + "', which the parser"
+                    + " ignores silently (check spelling)."));
             }
         }
     }
