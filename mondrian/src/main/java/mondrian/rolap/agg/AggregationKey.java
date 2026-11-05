@@ -57,6 +57,16 @@ public class AggregationKey
      */
     final List<StarPredicate> compoundPredicateList;
 
+    /**
+     * The request's subcube predicate, as text ("" for none). Two requests
+     * that differ only in it are not one aggregation: a calculated member that
+     * moves the cell to another year drops the subselect's year, and batched
+     * with the cells that keep it, its cell was read under the other year and
+     * was empty (a prior-year column beside the actual, Power BI on .40,
+     * 2026-11-05). Left out of the hash code, which Segment shares.
+     */
+    final String subcubePredicateString;
+
     private int hashCode;
 
     /**
@@ -73,6 +83,7 @@ public class AggregationKey
             compoundPredicateMap == null
                 ? Collections.<StarPredicate>emptyList()
                 : new ArrayList<StarPredicate>(compoundPredicateMap.values());
+        this.subcubePredicateString = request.getSubcubePredicateString();
     }
 
     public final int computeHashCode() {
@@ -119,7 +130,8 @@ public class AggregationKey
         final AggregationKey that = (AggregationKey) other;
         return constrainedColumnsBitKey.equals(that.constrainedColumnsBitKey)
             && star.equals(that.star)
-            && equal(compoundPredicateList, that.compoundPredicateList);
+            && equal(compoundPredicateList, that.compoundPredicateList)
+            && subcubePredicateString.equals(that.subcubePredicateString);
     }
 
     /**

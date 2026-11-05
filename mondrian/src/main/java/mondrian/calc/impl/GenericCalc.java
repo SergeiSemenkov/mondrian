@@ -85,8 +85,21 @@ public abstract class GenericCalc
         }
     }
 
-    public String evaluateString(Evaluator evaluator) {
+    /**
+     * The value as a typed calc sees it: the NULL member's key, the engine's
+     * null-key sentinel, is NULL. Properties("Key") of a #null member reached
+     * the string "=" as that sentinel and the cast threw, so a Power BI key
+     * filter on an attribute with NULL values put "Expected value of type
+     * STRING; got value '#null'" in the cell instead of skipping the member.
+     * {@link #evaluate} keeps the sentinel: sorting tells it apart.
+     */
+    private Object typedValue(Evaluator evaluator) {
         final Object o = evaluate(evaluator);
+        return o == mondrian.rolap.RolapUtil.sqlNullValue ? null : o;
+    }
+
+    public String evaluateString(Evaluator evaluator) {
+        final Object o = typedValue(evaluator);
         try {
             return (String) o;
         } catch (ClassCastException e) {
@@ -95,7 +108,7 @@ public abstract class GenericCalc
     }
 
     public int evaluateInteger(Evaluator evaluator) {
-        Object o = evaluate(evaluator);
+        Object o = typedValue(evaluator);
         try {
             final Number number = (Number) o;
             return number == null
@@ -107,7 +120,7 @@ public abstract class GenericCalc
     }
 
     public double evaluateDouble(Evaluator evaluator) {
-        final Object o = evaluate(evaluator);
+        final Object o = typedValue(evaluator);
         try {
             final Number number = (Number) o;
             return numberToDouble(number);

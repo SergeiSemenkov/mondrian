@@ -105,6 +105,9 @@ public class Segment {
   protected final List<ExcludedRegion> excludedRegions;
 
   private final int aggregationKeyHashCode;
+
+  /** The subcube predicate as {@link AggregationKey} compares it. */
+  private final String subcubePredicateString;
   protected final List<StarPredicate> compoundPredicateList;
   public StarPredicate subcubePredicate;
 
@@ -145,6 +148,7 @@ public class Segment {
     };
     this.aggregationKeyHashCode =
         AggregationKey.computeHashCode( constrainedColumnsBitKey, star, compoundPredicateBitKeys );
+    this.subcubePredicateString = subcubePredicate == null ? "" : subcubePredicate.toString();
     this.segmentHeader = SegmentBuilder.toHeader( this );
   }
 
@@ -287,7 +291,8 @@ public class Segment {
 
   private boolean matchesInternal( AggregationKey aggKey ) {
     return constrainedColumnsBitKey.equals( aggKey.getConstrainedColumnsBitKey() ) && star.equals( aggKey.getStar() )
-        && AggregationKey.equal( compoundPredicateList, aggKey.compoundPredicateList );
+        && AggregationKey.equal( compoundPredicateList, aggKey.compoundPredicateList )
+        && subcubePredicateString.equals( aggKey.subcubePredicateString );
   }
 
   /**

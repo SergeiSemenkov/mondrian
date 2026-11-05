@@ -226,14 +226,35 @@ public abstract class RolapAggregationManager {
         if (moved == null || moved.isEmpty()) {
             return predicate;
         }
+        return withoutMoved(predicate, moved);
+    }
+
+    /**
+     * {@code predicate} without the conjuncts on moved columns, at any depth:
+     * the subcube predicate is an AND of each subselect's AND, so with several
+     * subselects the year's condition sat one level down and was kept -- a
+     * prior year under a Year and a State subselect read "the_year = 1998"
+     * beside "the_year = 1997", and was empty. A condition that spans moved and
+     * other columns (an OR) stays whole.
+     */
+    private static StarPredicate withoutMoved(
+        StarPredicate predicate, BitKey moved)
+    {
         if (predicate instanceof AndPredicate) {
+            final List<StarPredicate> children =
+                ((AndPredicate) predicate).getChildren();
             final List<StarPredicate> kept = new ArrayList<StarPredicate>();
-            for (StarPredicate child : ((AndPredicate) predicate).getChildren()) {
-                if (!moved.isSuperSetOf(child.getConstrainedColumnBitKey())) {
-                    kept.add(child);
+            boolean changed = false;
+            for (StarPredicate child : children) {
+                final StarPredicate k = withoutMoved(child, moved);
+                if (k != child) {
+                    changed = true;
+                }
+                if (k != null) {
+                    kept.add(k);
                 }
             }
-            if (kept.size() == ((AndPredicate) predicate).getChildren().size()) {
+            if (!changed) {
                 return predicate;
             }
             return kept.isEmpty() ? null

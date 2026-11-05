@@ -1171,7 +1171,29 @@ class BatchLoader {
             final SegmentBuilder.SegmentConverter converter =
                 converterMap.get(
                     SegmentCacheIndexImpl.makeConverterKey(header));
-            return converter.convert(header, body, subcubePredicate);
+            return converter.convert(header, body, subcubePredicateOf(header));
+        }
+
+        /**
+         * The subcube predicate a segment from the cache was loaded under: the
+         * one of the request whose predicate the header records. The command's
+         * own is never set, and a segment converted without its predicate no
+         * longer matches the request that asked for it, now that requests with
+         * different subcube predicates are told apart (AggregationKey).
+         */
+        private StarPredicate subcubePredicateOf(SegmentHeader header) {
+            if (subcubePredicate != null) {
+                return subcubePredicate;
+            }
+            for (CellRequest request : cellRequests) {
+                if (request.getSubcubePredicate() != null
+                    && request.getSubcubePredicateString()
+                        .equals(header.subcubePredicateString))
+                {
+                    return request.getSubcubePredicate();
+                }
+            }
+            return null;
         }
     }
 
