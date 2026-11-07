@@ -915,7 +915,7 @@ public class SegmentCacheManager {
             storedMeasure.getCube().getStar()
               .getFactTable().getAlias(),
             flushRegion ,
-            "") );
+            null ) );
         if ( cacheControlImpl.isTraceEnabled() ) {
           headers.sort( Comparator.comparing( SegmentHeader::getUniqueID ) );
         }

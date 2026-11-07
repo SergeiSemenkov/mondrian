@@ -102,7 +102,7 @@ public interface SegmentCacheIndex {
         String measureName,
         String rolapStarFactTableName,
         SegmentColumn[] region,
-        String subcubePredicateString);
+        String subcubePredicateString); // null: segments under any subcube predicate
 
     /**
      * Adds a header to the index.

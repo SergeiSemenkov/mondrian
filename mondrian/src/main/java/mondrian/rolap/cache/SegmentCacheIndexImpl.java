@@ -432,18 +432,29 @@ public class SegmentCacheIndexImpl implements SegmentCacheIndex {
     {
         checkThread();
 
-        final List factKey = makeFuzzyFactKey(
-            schemaName,
-            schemaChecksum,
-            cubeName,
-            rolapStarFactTableName,
-            measureName,
-            subcubePredicateString);
-        final FuzzyFactInfo factInfo = fuzzyFactMap.get(factKey);
         List<SegmentHeader> list = Collections.emptyList();
-        if (factInfo == null) {
-            return list;
+        // A null predicate is any: a cache flush must reach the segments loaded under a
+        // subselect too, which are filed under their subcube predicate. Asked with "" it reached
+        // only the plain ones, and a flushed region kept serving the subselect's old cells.
+        final List<FuzzyFactInfo> infos = new ArrayList<FuzzyFactInfo>();
+        if (subcubePredicateString == null) {
+            final List prefix = makeFuzzyFactKey(
+                schemaName, schemaChecksum, cubeName, rolapStarFactTableName,
+                measureName, "").subList(0, 5);
+            for (Map.Entry<List, FuzzyFactInfo> entry : fuzzyFactMap.entrySet()) {
+                if (entry.getKey().subList(0, 5).equals(prefix)) {
+                    infos.add(entry.getValue());
+                }
+            }
+        } else {
+            final FuzzyFactInfo info = fuzzyFactMap.get(makeFuzzyFactKey(
+                schemaName, schemaChecksum, cubeName, rolapStarFactTableName,
+                measureName, subcubePredicateString));
+            if (info != null) {
+                infos.add(info);
+            }
         }
+        for (FuzzyFactInfo factInfo : infos)
         for (SegmentHeader header : factInfo.headerList) {
             // Don't return stale segments.
             if (headerMap.get(header).removeAfterLoad) {
