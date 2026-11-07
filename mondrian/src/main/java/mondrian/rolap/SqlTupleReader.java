@@ -1631,6 +1631,17 @@ public class SqlTupleReader implements TupleReader {
       return null;
     }
 
+    // Under a subselect, RolapNativeSet adds the subcube predicate to the SQL in the base star's
+    // columns, which an aggregate table does not carry: with one chosen, the fact table and the
+    // predicate's dimension tables came into FROM with no join to the aggregate table, a
+    // cartesian product (a Top N's NOT IsEmpty filter on Product Category under State and Year
+    // subselects ran 140 s on FoodMart). Cell loading already passes over aggregate tables when
+    // there are compound predicates, the subcube's among them (AggregationManager.generateSql).
+    if ( evaluator instanceof RolapEvaluator
+      && ( (RolapEvaluator) evaluator ).getSubcubePredicate() != null ) {
+      return null;
+    }
+
     if ( baseCube == null ) {
       baseCube = (RolapCube) evaluator.getCube();
     }
