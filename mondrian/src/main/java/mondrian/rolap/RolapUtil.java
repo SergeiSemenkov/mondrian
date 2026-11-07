@@ -410,6 +410,10 @@ public class RolapUtil {
                         "Mondrian: JDBC driver "
                         + jdbcDriver + " loaded successfully");
                 } catch (ClassNotFoundException e) {
+                    if (mondrian.util.JdbcDriverDirectory.isLoaded(jdbcDriver)) {
+                        // Registered from the drivers directory, in a loader of its own.
+                        continue;
+                    }
                     LOGGER.warn(
                         "Mondrian: Warning: JDBC driver "
                         + jdbcDriver + " not found");

@@ -96,6 +96,10 @@ public class MondrianModuleServletRegistrar implements ServletContextListener {
 
         LOGGER.info("MondrianModuleServletRegistrar: modulesPath=" + resolved);
 
+        // JDBC drivers installed at run time (install_driver), before anything connects.
+        mondrian.util.JdbcDriverDirectory.setDefaultDirectory(ctx.getRealPath("/drivers"));
+        mondrian.util.JdbcDriverDirectory.loadAll();
+
         discoverServlets(resolved);
         registerDiscoveredServlets(ctx);
     }
