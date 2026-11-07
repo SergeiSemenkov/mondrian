@@ -137,18 +137,33 @@ public abstract class RolapNativeSet extends RolapNative {
         final StarPredicate subcubePredicate =
           ( (RolapEvaluator) evaluator ).getSubcubePredicate();
         if ( subcubePredicate != null ) {
-          // Ensure the fact table and any constrained dimension tables are
-          // present in FROM/JOIN before rendering predicate SQL.
-          baseCube.getStar().getFactTable().addToFrom( sqlQuery, false, true );
-          for ( RolapStar.Column column
-            : subcubePredicate.getConstrainedColumnList() ) {
-            if ( column != null ) {
-              column.getTable().addToFrom( sqlQuery, false, true );
+          final StarPredicate predicate;
+          if ( aggStar != null ) {
+            // On the aggregate's own columns, which join their tables as they render.
+            // SqlTupleReader.chooseAggStar chose this aggregate only if they can be.
+            final List<StarPredicate> onAggregate =
+              mondrian.rolap.agg.AggregatePredicates.onAggregate(
+                Collections.singletonList( subcubePredicate ), aggStar );
+            if ( onAggregate == null ) {
+              throw Util.newInternal(
+                "subcube predicate not on aggregate " + aggStar.getFactTable().getName() );
             }
+            predicate = onAggregate.get( 0 );
+          } else {
+            // Ensure the fact table and any constrained dimension tables are
+            // present in FROM/JOIN before rendering predicate SQL.
+            baseCube.getStar().getFactTable().addToFrom( sqlQuery, false, true );
+            for ( RolapStar.Column column
+              : subcubePredicate.getConstrainedColumnList() ) {
+              if ( column != null ) {
+                column.getTable().addToFrom( sqlQuery, false, true );
+              }
+            }
+            predicate = subcubePredicate;
           }
 
           final StringBuilder buf = new StringBuilder();
-          subcubePredicate.toSql( sqlQuery, buf );
+          predicate.toSql( sqlQuery, buf );
           final String where = buf.toString();
           if ( where.length() > 0 && !"true".equals( where ) ) {
             sqlQuery.addWhere( where );

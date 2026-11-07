@@ -1634,16 +1634,17 @@ public class SqlTupleReader implements TupleReader {
       return null;
     }
 
-    // Under a subselect, RolapNativeSet adds the subcube predicate to the SQL in the base star's
-    // columns, which an aggregate table does not carry: with one chosen, the fact table and the
-    // predicate's dimension tables came into FROM with no join to the aggregate table, a
-    // cartesian product (a Top N's NOT IsEmpty filter on Product Category under State and Year
-    // subselects ran 140 s on FoodMart). Cell loading already passes over aggregate tables when
-    // there are compound predicates, the subcube's among them (AggregationManager.generateSql).
-    if ( evaluator instanceof RolapEvaluator
-      && ( (RolapEvaluator) evaluator ).getSubcubePredicate() != null ) {
-      return null;
-    }
+    // Under a subselect, RolapNativeSet adds the subcube predicate to the SQL. Rendered in the
+    // base star's columns beside an aggregate table, that brought the fact table and the
+    // predicate's dimension tables into FROM with no join to the aggregate, a cartesian product
+    // (a Top N's NOT IsEmpty filter on Product Category under State and Year subselects ran 140 s
+    // on FoodMart, engine .76). Since .81 the aggregate must carry the predicate's columns too,
+    // and the predicate is rendered on the aggregate's own columns (AggregatePredicates, as cell
+    // loading does since .80); when it cannot be, no aggregate table.
+    final StarPredicate subcubePredicate =
+      evaluator instanceof RolapEvaluator
+        ? ( (RolapEvaluator) evaluator ).getSubcubePredicate()
+        : null;
 
     if ( baseCube == null ) {
       baseCube = (RolapCube) evaluator.getCube();
@@ -1753,9 +1754,19 @@ public class SqlTupleReader implements TupleReader {
       }
     }
 
+    if ( subcubePredicate != null ) {
+      levelBitKey = levelBitKey.or( subcubePredicate.getConstrainedColumnBitKey() );
+    }
+
     // find the aggstar using the masks
-    return AggregationManager.findAgg(
+    final AggStar aggStar = AggregationManager.findAgg(
       star, levelBitKey, measureBitKey, new boolean[] { false } );
+    if ( aggStar != null && subcubePredicate != null
+      && mondrian.rolap.agg.AggregatePredicates.onAggregate(
+        Collections.singletonList( subcubePredicate ), aggStar ) == null ) {
+      return null;
+    }
+    return aggStar;
   }
 
   int getMaxRows() {
