@@ -12,6 +12,7 @@ import mondrian.calc.*;
 import mondrian.calc.impl.AbstractListCalc;
 import mondrian.mdx.ResolvedFunCall;
 import mondrian.olap.*;
+import mondrian.rolap.AttributeAutoExist;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -42,6 +43,9 @@ class ExistsFunDef extends FunDefBase
         final ListCalc listCalc2 = compiler.compileList(call.getArg(1));
 
         return new AbstractListCalc(call, new Calc[] {listCalc1, listCalc2}) {
+            // Sibling attribute hierarchies of one dimension, read once per query.
+            private final AttributeAutoExist autoExist = new AttributeAutoExist();
+
             public TupleList evaluateList(Evaluator evaluator) {
                 TupleList leftTuples = listCalc1.evaluateList(evaluator);
                 if (leftTuples.isEmpty()) {
@@ -61,7 +65,9 @@ class ExistsFunDef extends FunDefBase
                 for (List<Member> leftTuple : leftTuples) {
                     for (List<Member> rightTuple : rightTuples) {
                         if (existsInTuple(leftTuple, rightTuple,
-                            leftDims, rightDims, null))
+                            leftDims, rightDims, null)
+                            && existTogether(
+                                evaluator, autoExist, leftTuple, rightTuple))
                         {
                             result.add(leftTuple);
                             continue leftLoop;
@@ -71,6 +77,27 @@ class ExistsFunDef extends FunDefBase
                 return result;
             }
         };
+    }
+
+    /**
+     * Every member of the left tuple exists in the dimension table with every member of the right
+     * tuple from another hierarchy of its dimension: SSAS's auto-exist, which the attribute model
+     * needs, every attribute being a hierarchy of its own.
+     */
+    private static boolean existTogether(
+        Evaluator evaluator,
+        AttributeAutoExist autoExist,
+        List<Member> leftTuple,
+        List<Member> rightTuple)
+    {
+        for (Member left : leftTuple) {
+            for (Member right : rightTuple) {
+                if (!autoExist.exist(evaluator, left, right)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static List<Hierarchy> getHierarchies(final List<Member> members)
