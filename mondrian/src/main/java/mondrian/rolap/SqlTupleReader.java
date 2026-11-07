@@ -822,8 +822,11 @@ public class SqlTupleReader implements TupleReader {
   private Map<TargetBase, List<RolapCube>> getTargetToCubeMap(
     List<TargetBase> targets, Query query ) {
     assert ( (RolapCube) query.getCube() ).isVirtual();
-    Collection<RolapCube> cubesFromQuery = query.getBaseCubes();
-    assert cubesFromQuery != null;
+    // Null unless native set evaluation filled them in (RolapNativeSet); a reader built
+    // elsewhere (AttributeAutoExist's) maps its targets to the virtual cube's base cubes.
+    Collection<RolapCube> cubesFromQuery = query.getBaseCubes() == null
+      ? Collections.<RolapCube>emptyList()
+      : query.getBaseCubes();
     Collection<RolapCube> baseCubesAssociatedWithVirtual =
       getBaseCubeCollection( query );
 
