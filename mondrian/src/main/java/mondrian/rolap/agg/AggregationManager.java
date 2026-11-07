@@ -238,8 +238,21 @@ public class AggregationManager extends RolapAggregationManager {
         // Check if using aggregates is enabled.
         boolean hasCompoundPredicates = false;
         if (compoundPredicateList != null && compoundPredicateList.size() > 0) {
-            // Do not use Aggregate tables if compound predicates are present.
+            // Aggregate tables are used for compound predicates only where those can be put on
+            // the aggregate's own columns (below); otherwise the fact table.
             hasCompoundPredicates = true;
+        }
+        if (MondrianProperties.instance().UseAggregates.get()
+            && hasCompoundPredicates)
+        {
+            final Pair<String, List<SqlStatement.Type>> sql =
+                aggregateSqlWithPredicates(
+                    star, groupingSetsList, levelBitKey, measureBitKey,
+                    compoundPredicateList);
+            if (sql != null) {
+                return sql;
+            }
+            // No aggregate can carry the predicates: the fact table, as before.
         }
         if (MondrianProperties.instance().UseAggregates.get()
              && !hasCompoundPredicates)
@@ -328,6 +341,56 @@ public class AggregationManager extends RolapAggregationManager {
         }
 
         return pair;
+    }
+
+    /**
+     * The SQL for a cell load under compound predicates (a subselect's) on an aggregate table, or
+     * null for the fact table. The aggregate must carry the segment's columns, its measures and
+     * every column the predicates constrain; the predicates are rendered on its own columns
+     * (AggregatePredicates). A predicate column that is not one of the segment's makes the
+     * aggregate finer than the segment, so its rows are rolled up, which a distinct-count measure
+     * cannot be. Grouping sets and predicates that cannot be rewritten go to the fact table.
+     */
+    private static Pair<String, List<SqlStatement.Type>> aggregateSqlWithPredicates(
+        RolapStar star,
+        GroupingSetsList groupingSetsList,
+        BitKey levelBitKey,
+        BitKey measureBitKey,
+        List<StarPredicate> compoundPredicateList)
+    {
+        if (groupingSetsList.useGroupingSets()) {
+            return null;
+        }
+        BitKey predicateBitKey = levelBitKey.emptyCopy();
+        for (StarPredicate predicate : compoundPredicateList) {
+            predicateBitKey = predicateBitKey.or(predicate.getConstrainedColumnBitKey());
+        }
+        final BitKey combined = levelBitKey.or(predicateBitKey);
+        final boolean[] rollup = {false};
+        final AggStar aggStar = findAgg(star, combined, measureBitKey, rollup);
+        if (aggStar == null) {
+            return null;
+        }
+        if (!levelBitKey.isSuperSetOf(predicateBitKey) && !rollup[0]) {
+            for (Segment segment : groupingSetsList.getDefaultSegments()) {
+                if (segment.measure.getAggregator().isDistinct()) {
+                    return null;
+                }
+            }
+            rollup[0] = true;
+        }
+        final List<StarPredicate> onAggregate =
+            AggregatePredicates.onAggregate(compoundPredicateList, aggStar);
+        if (onAggregate == null) {
+            return null;
+        }
+        if (LOGGER.isDebugEnabled()) {
+            LOGGER.debug(
+                "MATCH WITH PREDICATES: " + aggStar.getFactTable().getName()
+                + " rollup=" + rollup[0]);
+        }
+        return new AggQuerySpec(aggStar, rollup[0], groupingSetsList, onAggregate)
+            .generateSqlQuery();
     }
 
     /**

@@ -22,6 +22,11 @@ public class NotPredicate extends AbstractColumnPredicate {
         this.predicate = predicate;
     }
 
+    /** The negated predicate. */
+    public StarPredicate getPredicate() {
+        return predicate;
+    }
+
     private static RolapStar.Column getFirstColumn(StarPredicate predicate) {
         List<RolapStar.Column> cols = predicate.getConstrainedColumnList();
         return cols.isEmpty() ? null : cols.get(0);

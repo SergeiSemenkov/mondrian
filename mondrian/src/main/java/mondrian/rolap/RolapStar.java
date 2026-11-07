@@ -948,6 +948,26 @@ public class RolapStar {
         }
 
         /**
+         * A stand-in for {@code original}: the same name, table, datatype and bit position, so it
+         * compares, hashes and groups as the original does, without being added to the star.
+         * Subclasses render it elsewhere by overriding {@link #generateExprString}; an aggregate
+         * table's column, for a subcube predicate on an aggregate (agg.AggregatePredicates).
+         */
+        protected Column(Column original)
+        {
+            this.name = original.name;
+            this.table = original.table;
+            this.expression = original.expression;
+            this.datatype = original.datatype;
+            this.internalType = original.internalType;
+            this.bitPosition = original.bitPosition;
+            this.nameColumn = original.nameColumn;
+            this.parentColumn = original.parentColumn;
+            this.usagePrefix = original.usagePrefix;
+            this.approxCardinality.set(original.approxCardinality.get());
+        }
+
+        /**
          * Fake column.
          *
          * @param datatype Datatype

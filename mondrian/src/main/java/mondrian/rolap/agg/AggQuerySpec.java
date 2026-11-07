@@ -15,6 +15,7 @@ package mondrian.rolap.agg;
 import mondrian.rolap.RolapStar;
 import mondrian.rolap.SqlStatement.Type;
 import mondrian.rolap.StarColumnPredicate;
+import mondrian.rolap.StarPredicate;
 import mondrian.rolap.aggmatcher.AggStar;
 import mondrian.rolap.sql.SqlQuery;
 import mondrian.util.Pair;
@@ -42,12 +43,24 @@ class AggQuerySpec {
     private final Segment segment0;
     private final boolean rollup;
     private final GroupingSetsList groupingSetsList;
+    /** Compound predicates already on the aggregate's columns (AggregatePredicates). */
+    private final List<StarPredicate> predicates;
 
     AggQuerySpec(
         final AggStar aggStar,
         final boolean rollup,
         GroupingSetsList groupingSetsList)
     {
+        this(aggStar, rollup, groupingSetsList, java.util.Collections.<StarPredicate>emptyList());
+    }
+
+    AggQuerySpec(
+        final AggStar aggStar,
+        final boolean rollup,
+        GroupingSetsList groupingSetsList,
+        List<StarPredicate> predicates)
+    {
+        this.predicates = predicates;
         this.aggStar = aggStar;
         this.segments = groupingSetsList.getDefaultSegments();
         this.segment0 = segments.get(0);
@@ -174,6 +187,17 @@ class AggQuerySpec {
                 sqlQuery.addSelect(expr, column.getInternalType());
             if (rollup) {
                 sqlQuery.addGroupBy(expr, alias);
+            }
+        }
+
+        // A subselect's predicates, rendered on the aggregate's columns (which add their own
+        // tables to FROM as they render).
+        for (StarPredicate predicate : predicates) {
+            StringBuilder buf = new StringBuilder();
+            predicate.toSql(sqlQuery, buf);
+            final String where = buf.toString();
+            if (!where.equals("true")) {
+                sqlQuery.addWhere(where);
             }
         }
 
