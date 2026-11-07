@@ -273,6 +273,14 @@ public class RolapNativeTopCount extends RolapNativeSet {
             } else {
                 combinedArgs = cjArgs;
             }
+            if (cjArgs.length > 1 && !evaluator.isNonEmpty()) {
+                // Fewer tuples with data than asked for are completed with empty ones, which
+                // SetEvaluator can only read for a single level (SqlTupleReader.readMembers
+                // asserts it): TOPN(1000, SUMMARIZE(<two columns>), [m]) failed there.
+                alertNonNativeTopCount(
+                    "Completing a crossjoin with empty tuples is not native.");
+                return null;
+            }
             TopCountConstraint constraint =
                 new TopCountConstraint(
                     count, combinedArgs, evaluator, orderByExpr, ascending);
