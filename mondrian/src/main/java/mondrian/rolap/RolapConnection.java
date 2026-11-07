@@ -318,15 +318,15 @@ public class RolapConnection extends ConnectionBase {
    * Creates a JDBC data source from the JDBC credentials contained within a
    * set of mondrian connection properties.
    *
-   * <p>This method is package-level so that it can be called from the
-   * RolapConnectionTest unit test.
+   * <p>Public since 9.3.0-emondrian.85 for the MCP tools that read a source's structure
+   * (describe_source, validate_source_sql) without loading a schema over it.
    *
    * @param dataSource  Anonymous data source from user, or null
    * @param connectInfo Mondrian connection properties
    * @param buf         Into which method writes a description of the JDBC credentials
    * @return Data source
    */
-  static DataSource createDataSource(
+  public static DataSource createDataSource(
     DataSource dataSource,
     Util.PropertyList connectInfo,
     StringBuilder buf ) {
