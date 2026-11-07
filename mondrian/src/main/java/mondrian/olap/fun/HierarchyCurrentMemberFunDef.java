@@ -121,7 +121,13 @@ public class HierarchyCurrentMemberFunDef extends FunDefBase {
       Map<Hierarchy, Set<Member>> map = rev.getSlicerMembersByHierarchy();
       Set<Member> members = map.get( hierarchy );
 
-      if ( members != null && members.size() > 1 ) {
+      // Only while the coordinate still is the compound slicer's placeholder: inside an
+      // iteration over the hierarchy (Filter, Exists, Generate) CurrentMember is the member the
+      // iteration set, which is well defined. Checked against the slicer alone, a
+      // Filter(<level>.Members, <h>.CurrentMember...) failed under a WHERE of several members
+      // of <h> (FM4 on engine .75, where DAX auto-exist restricts the rows by such a filter).
+      if ( members != null && members.size() > 1
+        && rev.getContext( hierarchy ) instanceof mondrian.rolap.RolapResult.CompoundSlicerRolapMember ) {
         MondrianException exception =
             MondrianResource.instance().CurrentMemberWithCompoundSlicer.ex( hierarchy.getUniqueName() );
 
