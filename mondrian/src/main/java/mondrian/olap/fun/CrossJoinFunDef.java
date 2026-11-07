@@ -53,6 +53,8 @@ import mondrian.olap.type.TupleType;
 import mondrian.olap.type.Type;
 import mondrian.resource.MondrianResource;
 import mondrian.rolap.RolapEvaluator;
+import mondrian.rolap.RolapStar;
+import mondrian.rolap.RolapStoredMeasure;
 import mondrian.rolap.SqlConstraintUtils;
 import mondrian.server.Execution;
 import mondrian.server.Locus;
@@ -810,6 +812,9 @@ public class CrossJoinFunDef extends FunDefBase {
       query.putEvalCache( measureSetKey, measureSet );
       query.putEvalCache( memberSetKey, memberSet );
     }
+    if ( hasOwnAggregation( measureSet, evaluator ) ) {
+      return list;
+    }
 
     final String allMemberListKey = "ALL_MEMBER_LIST-" + ctag;
     List<Member> allMemberList = Util.cast( (List) query.getEvalCache( allMemberListKey ) );
@@ -968,6 +973,33 @@ public class CrossJoinFunDef extends FunDefBase {
     } finally {
       evaluator.restore( savepoint );
     }
+  }
+
+  /**
+   * Whether a measure in play is aggregated by an implementation of its own (a metric view's MEASURE()). Pruning
+   * each side of a crossjoin with the other hierarchies at All assumes that a cell with data has data at All too, as
+   * a sum or a count does; such a measure can be null at All by design (a view can give no value for a mix of
+   * adjustment levels), and every member was pruned although the combinations had data.
+   */
+  private static boolean hasOwnAggregation( Set<Member> measureSet, Evaluator evaluator ) {
+    if ( measureSet.isEmpty() ) {
+      return hasOwnAggregation( evaluator.getMembers()[0] );
+    }
+    for ( Member measure : measureSet ) {
+      if ( hasOwnAggregation( measure ) ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static boolean hasOwnAggregation( Member measure ) {
+    if ( !( measure instanceof RolapStoredMeasure ) ) {
+      return false;
+    }
+    Object starMeasure = ( (RolapStoredMeasure) measure ).getStarMeasure();
+    return starMeasure instanceof RolapStar.Measure
+        && ( (RolapStar.Measure) starMeasure ).getAggregatorImplementation() != null;
   }
 
   private boolean tupleContainsCalcs( List<Member> current ) {
