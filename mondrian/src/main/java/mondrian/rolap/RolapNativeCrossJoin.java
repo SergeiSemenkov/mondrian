@@ -369,10 +369,13 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
 
         List<List<CrossJoinArg>> operandStates =
             new ArrayList<List<CrossJoinArg>>();
+        // Each operand's members in its own evaluated order, null where it was not split.
+        List<List<Member>> operandOrders = new ArrayList<List<Member>>();
         long variantCount = 1;
         boolean anySplit = false;
         for (Exp operand : operands) {
-            List<CrossJoinArg> states = resolveOperandStates(evaluator, operand);
+            List<CrossJoinArg> states =
+                resolveOperandStates(evaluator, operand, operandOrders);
             if (states == null || states.isEmpty()) {
                 LOGGER.debug(
                     "multi-variant crossjoin: bail, operand unresolvable: "
@@ -427,7 +430,7 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
             "using native crossjoin (multi-variant expansion, "
             + variants.size() + " variant(s))");
 
-        return new MultiVariantSetEvaluator(evaluator, fun, variants);
+        return new MultiVariantSetEvaluator(evaluator, fun, variants, operandOrders);
     }
 
     /**
@@ -468,13 +471,15 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
      */
     private List<CrossJoinArg> resolveOperandStates(
         RolapEvaluator evaluator,
-        Exp operand)
+        Exp operand,
+        List<List<Member>> orders)
     {
         List<CrossJoinArg[]> direct =
             crossJoinArgFactory().checkCrossJoinArg(evaluator, operand);
         if (direct != null && direct.size() == 1 && direct.get(0) != null
             && direct.get(0).length == 1)
         {
+            orders.add(null);
             return Collections.singletonList(direct.get(0)[0]);
         }
 
@@ -550,6 +555,7 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
                 }
                 states.add(arg);
             }
+            orders.add(tupleList.slice(0));
             return states;
         } finally {
             evaluator.getActiveNativeExpansions().remove(operand);
@@ -659,15 +665,18 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
         private final RolapEvaluator evaluator;
         private final FunDef fun;
         private final List<CrossJoinArg[]> variants;
+        private final List<List<Member>> operandOrders;
 
         MultiVariantSetEvaluator(
             RolapEvaluator evaluator,
             FunDef fun,
-            List<CrossJoinArg[]> variants)
+            List<CrossJoinArg[]> variants,
+            List<List<Member>> operandOrders)
         {
             this.evaluator = evaluator;
             this.fun = fun;
             this.variants = variants;
+            this.operandOrders = operandOrders;
         }
 
         public Object execute(ResultStyle desiredResultStyle) {
@@ -676,7 +685,55 @@ public class RolapNativeCrossJoin extends RolapNativeSet {
             for (CrossJoinArg[] variant : variants) {
                 executeOneVariant(variant, result);
             }
-            return result;
+            return inCrossJoinOrder(result);
+        }
+
+        /**
+         * The union in the order the crossjoin itself gives: the first operand slowest, each
+         * operand's members in its own order. Concatenating the variants put every tuple of one
+         * level combination before the next (Month x All Media for all months, then Month x
+         * Media), and Excel lays the pivot's rows out in the order it receives them.
+         */
+        private TupleList inCrossJoinOrder(TupleList result) {
+            final int arity = result.getArity();
+            final List<Map<Member, Integer>> ranks =
+                new ArrayList<Map<Member, Integer>>(arity);
+            for (int i = 0; i < arity; i++) {
+                final Map<Member, Integer> rank = new HashMap<Member, Integer>();
+                final List<Member> order = operandOrders.get(i);
+                // An operand that was not split keeps the order its SQL returned it in.
+                final Iterable<Member> members =
+                    order != null ? order : result.slice(i);
+                for (Member member : members) {
+                    if (!rank.containsKey(member)) {
+                        rank.put(member, rank.size());
+                    }
+                }
+                ranks.add(rank);
+            }
+            final List<List<Member>> tuples = new ArrayList<List<Member>>(result);
+            Collections.sort(tuples, new java.util.Comparator<List<Member>>() {
+                public int compare(List<Member> a, List<Member> b) {
+                    for (int i = 0; i < arity; i++) {
+                        final int c = Integer.compare(
+                            rankOf(ranks.get(i), a.get(i)), rankOf(ranks.get(i), b.get(i)));
+                        if (c != 0) {
+                            return c;
+                        }
+                    }
+                    return 0;
+                }
+            });
+            final TupleList sorted = TupleCollections.createList(arity);
+            for (List<Member> tuple : tuples) {
+                sorted.add(tuple);
+            }
+            return sorted;
+        }
+
+        private int rankOf(Map<Member, Integer> rank, Member member) {
+            final Integer r = rank.get(member);
+            return r == null ? Integer.MAX_VALUE : r;
         }
 
         private void executeOneVariant(CrossJoinArg[] variant, TupleList result) {

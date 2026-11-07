@@ -562,7 +562,7 @@ public class CrossJoinFunDef extends FunDefBase {
       // nonempty(crossjoin(nonempty(a),nonempty(b))
       final int missCount = evaluator.getMissCount();
 
-      list = nonEmptyList( evaluator, list, call );
+      list = nonEmptyList( evaluator, list, call, true );
       size = list.size();
       // list may be empty after nonEmpty optimization
       if ( size == 0 ) {
@@ -760,6 +760,15 @@ public class CrossJoinFunDef extends FunDefBase {
    * @return List of elements from the input parameter list that have evaluated to non-null.
    */
   protected TupleList nonEmptyList( Evaluator evaluator, TupleList list, ResolvedFunCall call ) {
+    return nonEmptyList( evaluator, list, call, false );
+  }
+
+  /**
+   * @param oneSide
+   *          whether {@code list} is one side of a crossjoin, pruned before the crossjoin (nonEmptyOptimizeList) rather
+   *          than the crossjoin's own tuples (NonEmptyCrossJoin)
+   */
+  private TupleList nonEmptyList( Evaluator evaluator, TupleList list, ResolvedFunCall call, boolean oneSide ) {
     if ( list.isEmpty() ) {
       return list;
     }
@@ -812,7 +821,9 @@ public class CrossJoinFunDef extends FunDefBase {
       query.putEvalCache( measureSetKey, measureSet );
       query.putEvalCache( memberSetKey, memberSet );
     }
-    if ( hasOwnAggregation( measureSet, evaluator ) ) {
+    if ( oneSide && hasOwnAggregation( measureSet, evaluator ) ) {
+      // Only the per-side shortcut assumes data at All; NonEmptyCrossJoin's own test of its tuples
+      // is the real one (skipping it too kept every empty tuple).
       return list;
     }
 

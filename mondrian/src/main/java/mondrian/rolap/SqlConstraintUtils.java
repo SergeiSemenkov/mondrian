@@ -1974,8 +1974,37 @@ public class SqlConstraintUtils {
     return membersNestedInMeasures;
   }
 
+  /**
+   * Whether a calculated measure names a member of a hierarchy the crossjoin iterates. Such a measure replaces the
+   * row's own member of that hierarchy when the cell is evaluated, so whether the row's members have fact rows, which
+   * is what the native crossjoin tests, says nothing about whether the cell is empty: with
+   * {@code ([Unit Sales], [Gender].[F], [Time.Year].[1997])}, NON EMPTY Year x Gender kept 1997 x F only, though every
+   * row has 1997's value for F. The check used to count the member as covered when it was among the crossjoin's
+   * members, which is exactly that case, and never saw the hierarchy of a level argument ({@code Year.Members}),
+   * whose members are not listed.
+   */
   public static boolean measuresConflictWithMembers( Set<Member> measuresMembers, CrossJoinArg[] cjArgs ) {
-    return measuresConflictWithMembers( measuresMembers, getCJArgMembers( cjArgs ) );
+    Set<Member> membersNestedInMeasures = getMembersNestedInMeasures( measuresMembers );
+    if ( membersNestedInMeasures.isEmpty() ) {
+      return false;
+    }
+    Set<Hierarchy> hierarchies = new HashSet<>();
+    for ( CrossJoinArg arg : cjArgs ) {
+      if ( arg.getLevel() != null ) {
+        hierarchies.add( arg.getLevel().getHierarchy() );
+      }
+      if ( arg.getMembers() != null ) {
+        for ( Member member : arg.getMembers() ) {
+          hierarchies.add( member.getHierarchy() );
+        }
+      }
+    }
+    for ( Member memberInMeasure : membersNestedInMeasures ) {
+      if ( hierarchies.contains( memberInMeasure.getHierarchy() ) ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   public static boolean containsValidMeasure( Exp... expressions ) {
@@ -2014,16 +2043,6 @@ public class SqlConstraintUtils {
       }
     }
     return !encounteredHierarchy || memberIsCovered;
-  }
-
-  private static Member[] getCJArgMembers( CrossJoinArg[] cjArgs ) {
-    Set<Member> members = new HashSet<Member>();
-    for ( CrossJoinArg arg : cjArgs ) {
-      if ( arg.getMembers() != null ) {
-        members.addAll( arg.getMembers() );
-      }
-    }
-    return members.toArray( new Member[members.size()] );
   }
 }
 
