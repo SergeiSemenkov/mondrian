@@ -12,13 +12,13 @@ package mondrian.rolap;
 
 import mondrian.mdx.*;
 import mondrian.olap.*;
-import mondrian.olap.fun.MondrianEvaluationException;
 import mondrian.olap.type.MemberType;
 import mondrian.olap.type.StringType;
 import mondrian.rolap.aggmatcher.AggStar;
 import mondrian.rolap.sql.SqlQuery;
 import mondrian.spi.Dialect;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
@@ -136,8 +136,14 @@ public class RolapNativeSql {
             Literal literal = (Literal) exp;
             String expr = String.valueOf(literal.getValue());
             if (!DECIMAL.matcher(expr).matches()) {
-                throw new MondrianEvaluationException(
-                    "Expected to get decimal, but got " + expr);
+                // A literal written with an exponent (1E+9) arrives as
+                // "1E+9": write it out in plain digits. One that has no
+                // plain form (NaN, Infinity) is left to the interpreter.
+                try {
+                    expr = new BigDecimal(expr).toPlainString();
+                } catch (NumberFormatException e) {
+                    return null;
+                }
             }
 
             if (dialect.getDatabaseProduct().getFamily()

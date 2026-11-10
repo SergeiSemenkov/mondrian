@@ -221,6 +221,37 @@ public class NativeFilterMatchingTest extends BatchTestCase {
             getTestContext());
     }
 
+    /**
+     * A number written with an exponent (1E+9, 5E+4) reaches the native
+     * filter as "1E+9". It used to fail the query with "Expected to get
+     * decimal, but got 1E+9" (seen on the demo, 9.3.0-emondrian.85); it is
+     * now written to SQL in plain digits.
+     */
+    public void testNativeFilterNumberWithExponent() {
+        assertQueryReturns(
+            "select Filter([Product].[Product Family].Members,"
+            + " [Measures].[Unit Sales] > 5E+4) on 0,"
+            + " {[Measures].[Unit Sales]} on 1 from [Sales]",
+            "Axis #0:\n"
+            + "{}\n"
+            + "Axis #1:\n"
+            + "{[Product].[Food]}\n"
+            + "{[Product].[Non-Consumable]}\n"
+            + "Axis #2:\n"
+            + "{[Measures].[Unit Sales]}\n"
+            + "Row #0: 191,940\n"
+            + "Row #0: 50,236\n");
+        verifySameNativeAndNot(
+            "select Filter([Product].[Product Family].Members,"
+            + " [Measures].[Unit Sales] > 1E+9) on 0,"
+            + " {[Measures].[Unit Sales]} on 1 from [Sales]",
+            "Filter w/ an exponent, no member passes.", getTestContext());
+        verifySameNativeAndNot(
+            "select Filter([Store].[Store Name].Members,"
+            + " [Measures].[Unit Sales] > 2.5E+4) on 0 from [Sales]",
+            "Filter w/ an exponent.", getTestContext());
+    }
+
     public void testCachedNativeFilter() {
         // http://jira.pentaho.com/browse/MONDRIAN-1694
 
