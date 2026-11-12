@@ -29,7 +29,9 @@ import java.io.FileInputStream;
 import java.io.InputStream;
 import java.security.Principal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -50,9 +52,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * <li><b>Reading logs, editing datasources.xml and installing licenses</b> are
  * server-wide, and are configured in {@code mondrian.properties} (or as
  * {@code -Dmondrian.security.*} system properties, which
- * {@link mondrian.olap.MondrianPropertiesBase#populate} copies in), under
- * {@code mondrian.security.role.<role>.<members|schema|database|logs|license>}
- * plus {@code mondrian.security.defaultRole}.</li>
+ * {@link mondrian.olap.MondrianPropertiesBase#populate} copies in), one
+ * property per grant listing the roles that hold it --
+ * {@code mondrian.security.<schema|database|logs|license|impersonate>.<value>}
+ * -- plus {@code mondrian.security.defaultRole}. A role is a user name or a
+ * group name of the caller; there is no separate membership list.</li>
  * </ul>
  *
  * <p>The split is not cosmetic. A schema file is itself editable through the
@@ -62,16 +66,15 @@ import java.util.concurrent.ConcurrentHashMap;
  * to everyone by writing it onto the schema's {@code defaultRole}. Server-wide
  * rights therefore live only where no endpoint can write them.</p>
  *
- * <p>A user holds a capability if any role they are a member of grants it.
+ * <p>A user holds a capability if any role they hold is granted it.
  * Callers with no identity, and callers matching no role, are resolved against
  * the default role -- {@code mondrian.security.defaultRole} at server level, the
  * schema's {@code defaultRole} attribute at catalog level.</p>
  *
- * <p>For backwards compatibility, an unconfigured capability is not enforced:
- * with no {@code mondrian.security.role.*} property set, the server-wide
- * capabilities are open, and with no role declaring {@code schemaAccess} at
- * either level, schema access is open. Enforcement begins as soon as the first
- * grant appears.</p>
+ * <p>An unconfigured capability is not enforced: a right with no grant
+ * property is open, and with no role declaring {@code schemaAccess} either,
+ * schema access is open. Each right is enforced from the moment its own
+ * property appears. Impersonation alone is never open.</p>
  */
 public class ServerPermissions {
 
@@ -115,6 +118,17 @@ public class ServerPermissions {
         /** The property/attribute name this capability is granted under. */
         public String getAttribute() {
             return attribute;
+        }
+
+        /**
+         * The property that grants this capability, e.g.
+         * {@code mondrian.security.schema.write}. A grant of a greater value
+         * of the same attribute grants it too: {@code schema.write} grants
+         * {@link #SCHEMA_READ}, {@code database.manage} grants
+         * {@link #DATABASE_READ}.
+         */
+        public String getPropertyName() {
+            return PROPERTY_PREFIX + attribute + "." + satisfyingValues[0];
         }
 
         /** The least value that satisfies this capability. */
@@ -300,19 +314,27 @@ public class ServerPermissions {
     // Server-level configuration
     // -----------------------------------------------------------------------
 
-    /** Prefix of the properties that declare a server-level role. */
-    public static final String ROLE_PROPERTY_PREFIX = "mondrian.security.role.";
+    /**
+     * Prefix of the server-level properties. A grant is
+     * {@code mondrian.security.<capability>.<value>=<role>,<role>,...}, e.g.
+     * {@code mondrian.security.schema.write=Admin}; see
+     * {@link Capability#getPropertyName}.
+     */
+    public static final String PROPERTY_PREFIX = "mondrian.security.";
 
     /** Property naming the role that callers matching no other role get. */
     public static final String DEFAULT_ROLE_PROPERTY =
         "mondrian.security.defaultRole";
 
-    /** Property suffix listing a server-level role's members. */
-    private static final String MEMBERS_SUFFIX = "members";
-
-    private static final Set<String> KNOWN_SUFFIXES = Set.of(
-        MEMBERS_SUFFIX, "schema", "database", "logs", "license",
-        "impersonate");
+    /**
+     * Prefix of the role-centred properties up to 9.3.0-emondrian.86
+     * ({@code mondrian.security.role.<role>.<members|capability>}). They are no
+     * longer read. A deployment still carrying them is denied every
+     * server-level grant until they are rewritten (as for any other
+     * malformed {@code mondrian.security.*} key), rather than silently left
+     * open because none of the new keys is set.
+     */
+    public static final String ROLE_PROPERTY_PREFIX = "mondrian.security.role.";
 
     /**
      * Keys already reported as malformed. A permission check runs per request,
@@ -321,14 +343,32 @@ public class ServerPermissions {
     private static final Set<String> REPORTED_BAD_KEYS =
         ConcurrentHashMap.newKeySet();
 
-    /** One server-level role: its members and the values it grants. */
-    private static class ServerRole {
-        final String name;
-        final List<String> members = new ArrayList<String>();
-        final Map<String, String> grants = new LinkedHashMap<String, String>();
+    /** The {@code mondrian.security.*} grants, as configured. */
+    private static class ServerGrants {
+        /** Grant ({@code "schema.write"}) to the roles it lists. */
+        final Map<String, List<String>> roles =
+            new LinkedHashMap<String, List<String>>();
+        /**
+         * Whether a property under the prefix is not a grant: one in the old
+         * role-centred format, or a misspelled one. Either was meant to
+         * restrict something, so its presence denies every server-level grant
+         * rather than leaving the server open.
+         */
+        boolean invalid;
 
-        ServerRole(String name) {
-            this.name = name;
+        /** Whether any grant lists the caller's user name or a group of theirs. */
+        boolean lists(Identity identity) {
+            if (identity == null) {
+                return false;
+            }
+            for (List<String> names : roles.values()) {
+                for (String name : names) {
+                    if (identity.isMember(name)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
     }
 
@@ -341,83 +381,60 @@ public class ServerPermissions {
      * answer with a stale rule, which is the worst failure mode a permission
      * check has.</p>
      */
-    private static Map<String, ServerRole> serverRoles() {
-        final Map<String, ServerRole> roles =
-            new LinkedHashMap<String, ServerRole>();
+    private static ServerGrants serverGrants() {
+        final ServerGrants grants = new ServerGrants();
         final MondrianProperties properties = MondrianProperties.instance();
         for (String key : properties.stringPropertyNames()) {
-            if (!key.startsWith(ROLE_PROPERTY_PREFIX)) {
+            if (!key.startsWith(PROPERTY_PREFIX)
+                || key.equals(DEFAULT_ROLE_PROPERTY))
+            {
                 continue;
             }
-            final String remainder =
-                key.substring(ROLE_PROPERTY_PREFIX.length());
-            final int dot = remainder.lastIndexOf('.');
-            final String roleName = dot < 0 ? "" : remainder.substring(0, dot);
-            final String suffix = dot < 0 ? "" : remainder.substring(dot + 1);
-            if (roleName.isEmpty()
-                || roleName.indexOf('.') >= 0
-                || !KNOWN_SUFFIXES.contains(suffix))
-            {
+            if (key.startsWith(ROLE_PROPERTY_PREFIX)) {
+                grants.invalid = true;
                 if (REPORTED_BAD_KEYS.add(key)) {
                     LOGGER.error(
                         "ServerPermissions: ignoring property '" + key
-                        + "'. Server-level grants are declared as "
-                        + ROLE_PROPERTY_PREFIX + "<role>.<"
-                        + String.join("|", KNOWN_SUFFIXES)
-                        + ">, and <role> may not contain a dot.");
+                        + "'. Roles are no longer declared as "
+                        + ROLE_PROPERTY_PREFIX + "<role>.<capability>;"
+                        + " write the grant the other way round, listing"
+                        + " roles, users or groups, e.g. "
+                        + Capability.SCHEMA_WRITE.getPropertyName()
+                        + "=Admin. Until it is rewritten, every server-level"
+                        + " grant is denied.");
                 }
                 continue;
             }
-            final String value = properties.getProperty(key);
-            ServerRole role = roles.get(roleName);
-            if (role == null) {
-                role = new ServerRole(roleName);
-                roles.put(roleName, role);
-            }
-            if (MEMBERS_SUFFIX.equals(suffix)) {
-                for (String member : splitGroups(value)) {
-                    role.members.add(member);
+            final String grant = key.substring(PROPERTY_PREFIX.length());
+            if (!GRANTS.contains(grant)) {
+                grants.invalid = true;
+                if (REPORTED_BAD_KEYS.add(key)) {
+                    LOGGER.error(
+                        "ServerPermissions: ignoring property '" + key
+                        + "'. Server-level grants are "
+                        + PROPERTY_PREFIX + "<" + String.join("|", GRANTS)
+                        + ">=<role>,<role>,... plus "
+                        + DEFAULT_ROLE_PROPERTY + ". Until it is fixed, every"
+                        + " server-level grant is denied.");
                 }
-            } else {
-                role.grants.put(suffix, value);
+                continue;
             }
+            grants.roles.put(
+                grant, Arrays.asList(splitGroups(properties.getProperty(key))));
         }
-        return roles;
+        return grants;
     }
 
-    /**
-     * The server-level roles {@code identity} is a member of, falling back to
-     * the role named by {@link #DEFAULT_ROLE_PROPERTY} when it matches none --
-     * so that anonymous and unrecognized callers are governed by whatever that
-     * role permits, exactly as a schema's {@code defaultRole} governs them for
-     * data.
-     */
-    private static List<ServerRole> matchServerRoles(
-        Map<String, ServerRole> roles,
-        Identity identity)
-    {
-        final List<ServerRole> matched = new ArrayList<ServerRole>();
-        if (identity != null) {
-            for (ServerRole role : roles.values()) {
-                for (String member : role.members) {
-                    if (identity.isMember(member)) {
-                        matched.add(role);
-                        break;
-                    }
-                }
-            }
+    /** Every grant suffix: {@code schema.read}, {@code schema.write}, ... */
+    private static final Set<String> GRANTS = grantSuffixes();
+
+    private static Set<String> grantSuffixes() {
+        final Set<String> grants = new LinkedHashSet<String>();
+        for (Capability capability : Capability.values()) {
+            grants.add(
+                capability.getPropertyName().substring(PROPERTY_PREFIX.length()));
         }
-        if (matched.isEmpty()) {
-            final String defaultRole = MondrianProperties.instance()
-                .getProperty(DEFAULT_ROLE_PROPERTY);
-            if (defaultRole != null && !defaultRole.trim().isEmpty()) {
-                final ServerRole role = roles.get(defaultRole.trim());
-                if (role != null) {
-                    matched.add(role);
-                }
-            }
-        }
-        return matched;
+        return grants;
     }
 
     // -----------------------------------------------------------------------
@@ -438,38 +455,49 @@ public class ServerPermissions {
      * Decides {@code capability} from the {@code mondrian.security.*}
      * properties.
      *
-     * <p>The server-wide capabilities are enforced as soon as any server-level
-     * role is declared at all: they are the operations that manage the server,
-     * so once an operator has said who administers it, everyone else is not an
-     * administrator. {@code schema} is different -- it also has a per-catalog
-     * level -- so it is enforced here only when some role actually declares
-     * it.</p>
+     * <p>A grant lists role names. The caller holds a role if it is their user
+     * name or one of their groups (in Keycloak, Active Directory or the
+     * container's realm, the name a group has there). A caller none of whose
+     * names any grant lists -- anonymous callers included -- holds the role
+     * named by {@link #DEFAULT_ROLE_PROPERTY} instead.</p>
+     *
+     * <p>Each right is decided by its own property alone: with no
+     * {@code mondrian.security.logs.read} line, reading logs is not enforced;
+     * with one, only the roles it lists hold it -- or those listed by a
+     * greater value of the same right ({@code schema.write} holders may read
+     * schemas). So a deployment closes exactly the rights it writes down, and
+     * {@code defaultRole} on its own closes nothing. Impersonation is the
+     * exception, never held unless listed: see {@link #mayImpersonate}.</p>
      */
     private static Decision decideAtServerLevel(
         Identity identity,
         Capability capability)
     {
-        final Map<String, ServerRole> roles = serverRoles();
-        if (roles.isEmpty()) {
+        final ServerGrants grants = serverGrants();
+        if (grants.invalid) {
+            return Decision.DENIED;
+        }
+        final String own = capability.getPropertyName()
+            .substring(PROPERTY_PREFIX.length());
+        if (!grants.roles.containsKey(own)) {
             return Decision.UNCONFIGURED;
         }
-        if (capability.isCatalogScoped()) {
-            boolean declared = false;
-            for (ServerRole role : roles.values()) {
-                if (role.grants.containsKey(capability.getAttribute())) {
-                    declared = true;
-                    break;
+        final boolean listed = grants.lists(identity);
+        final String defaultRole = MondrianProperties.instance()
+            .getProperty(DEFAULT_ROLE_PROPERTY, "").trim();
+        for (String value : capability.satisfyingValues) {
+            final List<String> roles =
+                grants.roles.get(capability.getAttribute() + "." + value);
+            if (roles == null) {
+                continue;
+            }
+            for (String role : roles) {
+                if (listed
+                    ? identity.isMember(role)
+                    : role.equalsIgnoreCase(defaultRole))
+                {
+                    return Decision.GRANTED;
                 }
-            }
-            if (!declared) {
-                return Decision.UNCONFIGURED;
-            }
-        }
-        for (ServerRole role : matchServerRoles(roles, identity)) {
-            if (capability.satisfiedBy(
-                    role.grants.get(capability.getAttribute())))
-            {
-                return Decision.GRANTED;
             }
         }
         return Decision.DENIED;
@@ -490,8 +518,8 @@ public class ServerPermissions {
      * Whether {@code identity} may run requests as another user.
      *
      * <p>Stricter than {@link #isGrantedAtServerLevel}: only an explicit
-     * {@code mondrian.security.role.<role>.impersonate=allow} on a role the
-     * caller matches grants it. A server with no security configured -- the
+     * {@code mondrian.security.impersonate.allow} listing a role the caller
+     * holds grants it. A server with no security configured -- the
      * open Community setup -- grants every other capability to everyone, but
      * granting this one would let any anonymous caller name any user,
      * {@code admin} included, and take over that user's rights.</p>
@@ -853,29 +881,20 @@ public class ServerPermissions {
                 .append(capability.getRequiredValue())
                 .append("\" to a <Role> the user is a member of, or to the")
                 .append(" schema's defaultRole; or grant it for every catalog")
-                .append(" with ")
-                .append(ROLE_PROPERTY_PREFIX)
-                .append("<role>.")
-                .append(capability.getAttribute())
-                .append("=")
-                .append(capability.getRequiredValue())
+                .append(" by listing the user, one of their groups or ")
+                .append(DEFAULT_ROLE_PROPERTY)
+                .append(" in ")
+                .append(capability.getPropertyName())
                 .append(" in mondrian.properties.");
         } else {
-            buf.append("This is a server-wide capability: set ")
-                .append(ROLE_PROPERTY_PREFIX)
-                .append("<role>.")
-                .append(capability.getAttribute())
-                .append("=")
-                .append(capability.getRequiredValue())
-                .append(" in mondrian.properties, and list the user or one of")
-                .append(" their groups in ")
-                .append(ROLE_PROPERTY_PREFIX)
-                .append("<role>.")
-                .append(MEMBERS_SUFFIX)
-                .append(" (or name that role in ")
+            buf.append("This is a server-wide capability: list the user, one")
+                .append(" of their groups, or the role named in ")
                 .append(DEFAULT_ROLE_PROPERTY)
-                .append("). It cannot be granted in a schema file, which is")
-                .append(" itself editable through the server.");
+                .append(", in ")
+                .append(capability.getPropertyName())
+                .append(" in mondrian.properties. It cannot be granted in a")
+                .append(" schema file, which is itself editable through the")
+                .append(" server.");
         }
         return buf.toString();
     }

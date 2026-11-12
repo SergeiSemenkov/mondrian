@@ -2292,7 +2292,7 @@ Revision is $Id$
                 declared here. A schema file is itself editable through the
                 server, so a right granted in one would be a right its holder
                 could grant themselves. They live in mondrian.properties, under
-                mondrian.security.role.&lt;role&gt;.&lt;logs|database|license&gt;.</p>
+                mondrian.security.&lt;logs|database|license&gt;.&lt;value&gt;.</p>
             </Doc>
             <Value>none</Value>
             <Value>read</Value>

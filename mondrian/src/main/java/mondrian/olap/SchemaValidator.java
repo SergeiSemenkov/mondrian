@@ -368,7 +368,7 @@ public class SchemaValidator {
                     + " XML. The server-wide capabilities it used to carry"
                     + " (database, logs, license) are now set in"
                     + " mondrian.properties as"
-                    + " mondrian.security.role.<role>.<database|logs|license>,"
+                    + " mondrian.security.<database|logs|license>.<value>,"
                     + " outside any file the server itself can write."));
             return;
         }

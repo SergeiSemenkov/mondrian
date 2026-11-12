@@ -110,8 +110,8 @@ public class XmlaHandler {
             LOGGER.warn(
                 "EffectiveUserName ignored for caller '" + callerName
                 + "', who is not granted "
-                + ServerPermissions.ROLE_PROPERTY_PREFIX
-                + "<role>.impersonate=allow; requests run as the caller.");
+                + ServerPermissions.Capability.IMPERSONATE.getPropertyName()
+                + "; requests run as the caller.");
         }
         return caller;
     }

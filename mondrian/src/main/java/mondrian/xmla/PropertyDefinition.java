@@ -332,7 +332,7 @@ public enum PropertyDefinition {
             XmlaConstants.Access.Write,
             "",
             XmlaConstants.Method.DISCOVER_AND_EXECUTE,
-            "The user to run the request as. Honored only when the caller is granted mondrian.security.role.<role>.impersonate=allow; otherwise the request runs as the caller."),
+            "The user to run the request as. Honored only when mondrian.security.impersonate.allow lists a role the caller holds; otherwise the request runs as the caller."),
 
     // Microsoft-specific XMLA definition. Applied by XmlaHandler.getConnection.
     Roles(
