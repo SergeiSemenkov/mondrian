@@ -266,11 +266,15 @@ public class Aggregation {
                 continue;
             }
 
-            if (valueCount > maxConstraints) {
+            if (valueCount > maxConstraints
+                && !star.getSqlQueryDialect().supportsUnlimitedValueList())
+            {
                 // Some databases can handle only a limited number of elements
                 // in 'WHERE IN (...)'. This set is greater than this database
                 // can handle, so we drop this constraint. Hopefully there are
-                // other constraints that will limit the result.
+                // other constraints that will limit the result. A dialect
+                // without such a limit keeps it: dropping the 2,000 tail
+                // numbers of a role made OnTime load every tail number.
                 bloats[i] = 1.0; // will be optimized away
                 continue;
             }

@@ -17,6 +17,8 @@ import org.apache.logging.log4j.Logger;
 import org.apache.logging.log4j.LogManager;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Supplier;
 
 /**
  * Default implementation of the {@link Role} interface.
@@ -38,6 +40,14 @@ public class RoleImpl implements Role {
         LogManager.getLogger(RoleImpl.class);
     private final List<Object[]> hashCache = new ArrayList<Object[]>();
     private int hash = 0;
+    /**
+     * Member grants of custom hierarchies worked out the first time a check
+     * needs them rather than when the role is built (see
+     * {@link #deferMemberGrants}).
+     */
+    private final Map<Hierarchy, Supplier<Map<Member, Access>>>
+        deferredMemberGrants =
+            new ConcurrentHashMap<Hierarchy, Supplier<Map<Member, Access>>>();
 
     /**
      * Creates a role with no permissions.
@@ -82,6 +92,7 @@ public class RoleImpl implements Role {
         role.cubeGrants.putAll(cubeGrants);
         role.dimensionGrants.putAll(dimensionGrants);
         role.hashCache.addAll(hashCache);
+        role.deferredMemberGrants.putAll(deferredMemberGrants);
         for (Map.Entry<Hierarchy, HierarchyAccessImpl> entry
             : hierarchyGrants.entrySet())
         {
@@ -484,7 +495,7 @@ public class RoleImpl implements Role {
     public HierarchyAccess getAccessDetails(Hierarchy hierarchy) {
         Util.assertPrecondition(hierarchy != null, "hierarchy != null");
         if (hierarchyGrants.containsKey(hierarchy)) {
-            return hierarchyGrants.get(hierarchy);
+            return resolvedGrants(hierarchy);
         }
         final Access hierarchyAccess;
         final Access schemaGrant =
@@ -598,7 +609,7 @@ public class RoleImpl implements Role {
         // Check if the parent hierarchy has any access
         // rules for this.
         final HierarchyAccessImpl hierarchyAccess =
-            hierarchyGrants.get(member.getHierarchy());
+            resolvedGrants(member.getHierarchy());
         if (hierarchyAccess != null) {
             return hierarchyAccess.getAccess(member);
         }
@@ -610,6 +621,53 @@ public class RoleImpl implements Role {
             + " because of the grant to level "
             + member.getLevel().getUniqueName());
         return access;
+    }
+
+    /**
+     * Defers the member grants of a hierarchy already granted
+     * {@link Access#CUSTOM} until a check first needs them. The schema uses it
+     * for grants it derives (attribute hierarchies from a restricted user
+     * hierarchy), which can mean reading a whole level: done when the role is
+     * built, every role of a schema paid for it on every schema load, whether
+     * or not a query ever touched the hierarchy.
+     *
+     * @param hierarchy Hierarchy, granted CUSTOM
+     * @param grants Computes the members to grant and their access; called
+     *     at most once, under this role's lock
+     */
+    public void deferMemberGrants(
+        Hierarchy hierarchy,
+        Supplier<Map<Member, Access>> grants)
+    {
+        assert isMutable();
+        assert hierarchyGrants.get(hierarchy) != null
+            && hierarchyGrants.get(hierarchy).access == Access.CUSTOM;
+        deferredMemberGrants.put(hierarchy, grants);
+    }
+
+    /**
+     * The grants of a hierarchy, with any deferred member grants applied
+     * first. Only member-level answers need them; the hierarchy's own access
+     * is known without.
+     */
+    private HierarchyAccessImpl resolvedGrants(Hierarchy hierarchy) {
+        if (!deferredMemberGrants.isEmpty()
+            && deferredMemberGrants.containsKey(hierarchy))
+        {
+            synchronized (this) {
+                final Supplier<Map<Member, Access>> grants =
+                    deferredMemberGrants.get(hierarchy);
+                if (grants != null) {
+                    final HierarchyAccessImpl hierarchyAccess =
+                        hierarchyGrants.get(hierarchy);
+                    hierarchyAccess.grantDerived(grants.get());
+                    // Only now, so that a concurrent check waits for all of
+                    // them rather than seeing some.
+                    deferredMemberGrants.remove(hierarchy);
+                }
+            }
+        }
+        return hierarchyGrants.get(hierarchy);
     }
 
     public Access getAccess(NamedSet set) {
@@ -679,6 +737,15 @@ public class RoleImpl implements Role {
             new HashMap<String, MemberAccess>();
         private final RollupPolicy rollupPolicy;
         private final Role role;
+        /**
+         * Unique names of the members that have a NONE or CUSTOM grant at or
+         * below them, built on first use by
+         * {@link #hasInaccessibleDescendants(Member)} and dropped by every
+         * grant. Partial rollup asks that question for each visible member
+         * in each cell; going through every grant each time made a role of
+         * 2,000 members cost 2,000 x 2,000 checks per cell.
+         */
+        private volatile Set<String> restrictedSubtrees;
 
         /**
          * Creates a <code>HierarchyAccessImpl</code>.
@@ -730,8 +797,40 @@ public class RoleImpl implements Role {
          * @param member Member
          * @param access Access
          */
+        /**
+         * Grants members of a one-level hierarchy that has no member grants
+         * yet. {@link #grant(RoleImpl, Member, Access)} looks through every
+         * grant already made for each new one, to drop those it overrides;
+         * here there are none to drop, and thousands of members made that
+         * quadratic.
+         */
+        void grantDerived(Map<Member, Access> grants) {
+            restrictedSubtrees = null;
+            for (Map.Entry<Member, Access> entry : grants.entrySet()) {
+                final Member member = entry.getKey();
+                Util.assertTrue(member.getHierarchy() == hierarchy);
+                assert entry.getValue() == Access.ALL
+                    && (member.getParentMember() == null
+                        || member.getParentMember().isAll());
+                memberGrants.put(
+                    member.getUniqueName(),
+                    new MemberAccess(member, entry.getValue()));
+                // as grant() does: the All member above a visible one is
+                // custom, so it stays visible itself
+                final Member parent = member.getParentMember();
+                if (parent != null
+                    && !memberGrants.containsKey(parent.getUniqueName()))
+                {
+                    memberGrants.put(
+                        parent.getUniqueName(),
+                        new MemberAccess(parent, Access.CUSTOM));
+                }
+            }
+        }
+
         void grant(RoleImpl role, Member member, Access access) {
             Util.assertTrue(member.getHierarchy() == hierarchy);
+            restrictedSubtrees = null;
 
             // Remove any existing grants to descendants of "member"
             for (Iterator<MemberAccess> memberIter =
@@ -977,19 +1076,24 @@ public class RoleImpl implements Role {
          * restricted by the access controls of this role instance.
          */
         public boolean hasInaccessibleDescendants(Member member) {
-            for (MemberAccess access : memberGrants.values()) {
-                switch (access.access) {
-                case NONE:
-                case CUSTOM:
-                    if (access.isSubGrant(member)) {
-                        // At least one of the limited member is
-                        // part of the descendants of this member.
-                        return true;
+            Set<String> subtrees = restrictedSubtrees;
+            if (subtrees == null) {
+                subtrees = new HashSet<String>();
+                for (MemberAccess access : memberGrants.values()) {
+                    switch (access.access) {
+                    case NONE:
+                    case CUSTOM:
+                        // the limited member and each of its ancestors
+                        for (Member m = access.member;
+                            m != null && subtrees.add(m.getUniqueName());
+                            m = m.getParentMember())
+                        {
+                        }
                     }
                 }
+                restrictedSubtrees = subtrees;
             }
-            // All descendants are accessible.
-            return false;
+            return subtrees.contains(member.getUniqueName());
         }
     }
 
@@ -1001,48 +1105,12 @@ public class RoleImpl implements Role {
     private static class MemberAccess {
         private final Member member;
         private final Access access;
-        // We use a weak hash map so that it naturally clears
-        // when more memory is required by other parts.
-        // This cache is useful for optimization, but cannot be
-        // let to grow indefinitely. This would cause problems
-        // on high cardinality dimensions.
-        private final Map<String, Boolean> parentsCache =
-            new WeakHashMap<String, Boolean>();
         public MemberAccess(
             Member member,
             Access access)
         {
                 this.member = member;
                 this.access = access;
-        }
-
-        /**
-         * Tells whether the member concerned by this grant object
-         * is a children of a given member. The result of the computation
-         * is cached for faster results, since this might get called
-         * very often.
-         */
-        private boolean isSubGrant(Member parentMember) {
-            if (parentsCache.containsKey(parentMember.getUniqueName())) {
-                return parentsCache.get(parentMember.getUniqueName());
-            }
-            for (Member m = member; m != null; m = m.getParentMember()) {
-                if (m.equals(parentMember)) {
-                    // We have proved that this granted member is a
-                    // descendant of 'member'. Cache it and return.
-                    parentsCache.put(
-                        parentMember.getUniqueName(), Boolean.TRUE);
-                    return true;
-                }
-            }
-            // Not a parent. Cache it and return.
-            if (MondrianProperties.instance()
-                .EnableRolapCubeMemberCache.get())
-            {
-                parentsCache.put(
-                    parentMember.getUniqueName(), Boolean.FALSE);
-            }
-            return false;
         }
 
         public String toString() {

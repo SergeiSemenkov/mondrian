@@ -19,6 +19,7 @@ import mondrian.rolap.aggmatcher.AggTableManager;
 import mondrian.spi.*;
 import mondrian.spi.impl.Scripts;
 import mondrian.util.ByteString;
+import mondrian.util.Pair;
 import mondrian.util.ClassResolver;
 
 import org.apache.commons.vfs2.FileSystemException;
@@ -769,15 +770,214 @@ public class RolapSchema implements Schema {
                 getAccess(grant.access, dimensionAllowed));
         }
 
+        // hierarchy -> its member grants, for deriveAttributeHierarchyGrants
+        final Map<Hierarchy, Map<Member, Access>> granted =
+            new LinkedHashMap<Hierarchy, Map<Member, Access>>();
         for (MondrianDef.HierarchyGrant hierarchyGrant
             : cubeGrant.hierarchyGrants)
         {
-            handleHierarchyGrant(role, cube, reader, hierarchyGrant);
+            granted.put(
+                (Hierarchy) lookup(
+                    cube, reader, Category.Hierarchy,
+                    hierarchyGrant.hierarchy),
+                handleHierarchyGrant(role, cube, reader, hierarchyGrant));
+        }
+        deriveAttributeHierarchyGrants(role, reader.withLocus(), granted);
+    }
+
+    /**
+     * Grants the attribute hierarchies of a dimension whose user hierarchy a
+     * role restricts.
+     *
+     * <p>A custom grant on a user hierarchy, say {@code [Airline]}, makes its
+     * dimension custom, and every other hierarchy of that dimension without a
+     * grant of its own then has no access at all. The attribute hierarchies
+     * ({@code [Airline.Airline]}) are among those, and they are what DAX and
+     * the CSDL a Power BI model is built from address, so every DAX query
+     * touching the dimension failed and the model lost the column.</p>
+     *
+     * <p>An attribute hierarchy the user hierarchy builds a level from
+     * ({@code sourceAttribute}) gets the members of that level the role can
+     * see, matched by key: granting the airport ATL makes the attribute
+     * members ATL, its city and its state visible. Values need nothing more,
+     * since the user hierarchy's own restricted member stays in every cell's
+     * context; the derived grant therefore rolls up {@code full}, which costs
+     * no second aggregation. A grant written for the attribute hierarchy
+     * itself is never replaced. One no level is built from, or one whose level
+     * lies outside the grant's topLevel..bottomLevel, keeps no access.</p>
+     *
+     * <p>Which members can mean reading a level (a grant above it is
+     * expanded to its descendants there) and the attribute's own members,
+     * so only the hierarchy's access is decided here; the members are worked
+     * out the first time a check needs them
+     * ({@link RoleImpl#deferMemberGrants}). Every role of a schema is built
+     * on every schema load, and most never meet most attribute
+     * hierarchies.</p>
+     */
+    private void deriveAttributeHierarchyGrants(
+        final RoleImpl role,
+        final SchemaReader reader,
+        Map<Hierarchy, Map<Member, Access>> granted)
+    {
+        // attribute hierarchy -> (user hierarchy level, its member grants)
+        final Map<Hierarchy, List<Pair<Level, Map<Member, Access>>>> sources =
+            new LinkedHashMap<
+                Hierarchy, List<Pair<Level, Map<Member, Access>>>>();
+        for (Map.Entry<Hierarchy, Map<Member, Access>> entry
+            : granted.entrySet())
+        {
+            final Hierarchy userHierarchy = entry.getKey();
+            if (RolapDimension.isAttributeHierarchy(
+                    (RolapHierarchy) userHierarchy)
+                || role.getAccess(userHierarchy) != Access.CUSTOM)
+            {
+                continue;
+            }
+            final Role.HierarchyAccess access =
+                role.getAccessDetails(userHierarchy);
+            for (Hierarchy hierarchy
+                : userHierarchy.getDimension().getHierarchies())
+            {
+                if (granted.containsKey(hierarchy)
+                    || !RolapDimension.isAttributeHierarchy(
+                        (RolapHierarchy) hierarchy))
+                {
+                    continue;
+                }
+                final String attribute =
+                    ((RolapHierarchy) hierarchy).getXmlHierarchy().name;
+                for (Level level : userHierarchy.getLevels()) {
+                    if (!level.isAll()
+                        && attribute.equals(
+                            ((RolapLevel) level).getSourceAttribute())
+                        && level.getDepth() >= access.getTopLevelDepth()
+                        && level.getDepth() <= access.getBottomLevelDepth())
+                    {
+                        List<Pair<Level, Map<Member, Access>>> list =
+                            sources.get(hierarchy);
+                        if (list == null) {
+                            list =
+                                new ArrayList<
+                                    Pair<Level, Map<Member, Access>>>();
+                            sources.put(hierarchy, list);
+                        }
+                        list.add(
+                            new Pair<Level, Map<Member, Access>>(
+                                level, entry.getValue()));
+                        break;
+                    }
+                }
+            }
+        }
+        for (final Map.Entry<Hierarchy,
+                List<Pair<Level, Map<Member, Access>>>> entry
+            : sources.entrySet())
+        {
+            final Hierarchy hierarchy = entry.getKey();
+            role.grant(
+                hierarchy, Access.CUSTOM, null, null,
+                Role.RollupPolicy.FULL);
+            role.deferMemberGrants(
+                hierarchy,
+                new java.util.function.Supplier<Map<Member, Access>>() {
+                    public Map<Member, Access> get() {
+                        // restricted through two user hierarchies: both apply
+                        Set<Object> keys = null;
+                        for (Pair<Level, Map<Member, Access>> source
+                            : entry.getValue())
+                        {
+                            final Set<Object> visible = visibleKeys(
+                                role, reader, source.left, source.right);
+                            if (keys == null) {
+                                keys = visible;
+                            } else {
+                                keys.retainAll(visible);
+                            }
+                        }
+                        final Map<Member, Access> members =
+                            new LinkedHashMap<Member, Access>();
+                        for (Level level : hierarchy.getLevels()) {
+                            if (level.isAll()) {
+                                continue;
+                            }
+                            for (Member member
+                                : reader.getLevelMembers(level, false))
+                            {
+                                if (keys.contains(keyOf(member))) {
+                                    members.put(member, Access.ALL);
+                                }
+                            }
+                        }
+                        return members;
+                    }
+                });
         }
     }
 
+    /**
+     * Keys of the members of {@code level} a role sees, from the member
+     * grants of its hierarchy: a granted member at the level, the ancestor
+     * there of one below it, the descendants there of one above it. Read
+     * from the grants rather than by checking every member of the level,
+     * which made a level of 10,000 customers cost seconds per role.
+     */
+    private static Set<Object> visibleKeys(
+        Role role,
+        SchemaReader reader,
+        Level level,
+        Map<Member, Access> memberGrants)
+    {
+        final Set<Object> keys = new HashSet<Object>();
+        final List<Member> above = new ArrayList<Member>();
+        final List<Member> candidates = new ArrayList<Member>();
+        boolean denies = false;
+        for (Map.Entry<Member, Access> grant : memberGrants.entrySet()) {
+            Member member = grant.getKey();
+            if (grant.getValue() != Access.ALL) {
+                denies = true;
+                continue;
+            }
+            if (member.getDepth() < level.getDepth()) {
+                above.add(member);
+                continue;
+            }
+            while (member.getDepth() > level.getDepth()) {
+                member = member.getParentMember();
+            }
+            candidates.add(member);
+        }
+        if (memberGrants.isEmpty()) {
+            // custom by topLevel/bottomLevel alone: the whole level
+            candidates.addAll(reader.getLevelMembers(level, false));
+        }
+        for (List<Member> frontier = above; !frontier.isEmpty();) {
+            final List<Member> children = reader.getMemberChildren(frontier);
+            frontier = new ArrayList<Member>();
+            for (Member child : children) {
+                if (child.getDepth() == level.getDepth()) {
+                    candidates.add(child);
+                } else {
+                    frontier.add(child);
+                }
+            }
+        }
+        for (Member member : candidates) {
+            // a member denied below a granted one hides only that member
+            if (!denies || role.getAccess(member) != Access.NONE) {
+                keys.add(keyOf(member));
+            }
+        }
+        return keys;
+    }
+
+    /** A member's key in a form two levels over the same column agree on. */
+    private static Object keyOf(Member member) {
+        final Object key = ((RolapMember) member).getKey();
+        return key == null ? null : key.toString();
+    }
+
     // package-local visibility for testing purposes
-    void handleHierarchyGrant(
+    Map<Member, Access> handleHierarchyGrant(
         RoleImpl role,
         RolapCube cube,
         SchemaReader reader,
@@ -813,6 +1013,8 @@ public class RolapSchema implements Schema {
         final boolean ignoreInvalidMembers =
             MondrianProperties.instance().IgnoreInvalidMembers.get();
 
+        final Map<Member, Access> memberAccess =
+            new LinkedHashMap<Member, Access>();
         int membersRejected = 0;
         if (grant.memberGrants.length > 0) {
             if (hierarchyAccess != Access.CUSTOM) {
@@ -841,9 +1043,10 @@ public class RolapSchema implements Schema {
                         "Member '" + member
                         + "' is not in hierarchy '" + hierarchy + "'");
                 }
-                role.grant(
-                    member,
-                    getAccess(memberGrant.access, memberAllowed));
+                final Access access =
+                    getAccess(memberGrant.access, memberAllowed);
+                role.grant(member, access);
+                memberAccess.put(member, access);
             }
         }
 
@@ -859,6 +1062,7 @@ public class RolapSchema implements Schema {
             }
             role.grant(hierarchy, Access.NONE, null, null, rollupPolicy);
         }
+        return memberAccess;
     }
 
     private <T extends OlapElement> T lookup(

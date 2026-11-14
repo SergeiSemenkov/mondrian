@@ -950,9 +950,19 @@ public class RolapHierarchy extends HierarchyBase {
         final Access access = role.getAccess(this);
         switch (access) {
         case NONE:
-            role.getAccess(this); // todo: remove
-            throw Util.newInternal(
-                "Illegal access to members of hierarchy " + this);
+            // Reached by a query naming a hierarchy the role denies -- typically
+            // an attribute hierarchy of a dimension whose user hierarchy the
+            // role restricts, when no level of it is built from that attribute
+            // (RolapSchema.deriveAttributeHierarchyGrants). Not Util.newError,
+            // which prefixes "Internal error".
+            throw new MondrianException(
+                "The current role has no access to hierarchy " + this
+                + ". A role that restricts another hierarchy of dimension "
+                + getDimension().getUniqueName()
+                + " grants this one only where it can derive the grant from"
+                + " a level built from the same attribute; grant it in the"
+                + " role explicitly (<HierarchyGrant hierarchy=\""
+                + getUniqueName() + "\" ...>).");
         case ALL:
             return (isRagged())
                 ? new SmartRestrictedMemberReader(getMemberReader(), role)
