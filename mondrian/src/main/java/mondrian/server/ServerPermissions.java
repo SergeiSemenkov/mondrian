@@ -337,6 +337,26 @@ public class ServerPermissions {
     public static final String ROLE_PROPERTY_PREFIX = "mondrian.security.role.";
 
     /**
+     * System property naming the security file, e.g.
+     * {@code -Demondrian.security.file=/etc/emondrian/security.properties}:
+     * the {@code mondrian.security.*} grants in their own file, read again
+     * when it changes, so a grant changes without a restart.
+     *
+     * <p>When it is set, the file is the only source of the grants: the
+     * {@code mondrian.security.*} keys of {@code mondrian.properties} and the
+     * {@code -D} options are ignored, with one warning. A file that is
+     * missing, cannot be read or holds a key other than a grant denies every
+     * server-level grant and logs an ERROR, as a misspelled key does: a file
+     * named and not usable is a mistake, never "open". When it is not set,
+     * the grants come from {@link MondrianProperties} as before.</p>
+     *
+     * <p>Only grants go in the file. {@link #TRUST_FORWARDED_HEADERS_PROPERTY}
+     * says whether the identity a grant is matched against can be believed,
+     * so it stays a start-up option and is refused in the file.</p>
+     */
+    public static final String SECURITY_FILE_PROPERTY = "emondrian.security.file";
+
+    /**
      * Keys already reported as malformed. A permission check runs per request,
      * so without this a single typo would be logged forever.
      */
@@ -345,6 +365,8 @@ public class ServerPermissions {
 
     /** The {@code mondrian.security.*} grants, as configured. */
     private static class ServerGrants {
+        /** {@link #DEFAULT_ROLE_PROPERTY}, trimmed; empty when unset. */
+        String defaultRole = "";
         /** Grant ({@code "schema.write"}) to the roles it lists. */
         final Map<String, List<String>> roles =
             new LinkedHashMap<String, List<String>>();
@@ -373,17 +395,31 @@ public class ServerPermissions {
     }
 
     /**
-     * Reads the {@code mondrian.security.*} properties.
+     * Reads the {@code mondrian.security.*} grants, from the security file
+     * when {@link #SECURITY_FILE_PROPERTY} names one, else from
+     * {@link MondrianProperties}.
      *
-     * <p>Read afresh on every check rather than cached: the properties are
-     * loaded once by {@link MondrianProperties} and the checks happen only on
-     * administrative requests, so a cache here would buy nothing and could
-     * answer with a stale rule, which is the worst failure mode a permission
-     * check has.</p>
+     * <p>Read afresh on every check rather than cached: the checks happen
+     * only on administrative requests, so a cache here would buy nothing and
+     * could answer with a stale rule, which is the worst failure mode a
+     * permission check has. The security file is read on every check too, and
+     * parsed again only when its bytes changed.</p>
      */
     private static ServerGrants serverGrants() {
         final ServerGrants grants = new ServerGrants();
-        final MondrianProperties properties = MondrianProperties.instance();
+        final java.util.Properties properties;
+        final String file = securityFile();
+        if (file == null) {
+            properties = MondrianProperties.instance();
+        } else {
+            properties = SecurityFile.read(file);
+            if (properties == null) {
+                grants.invalid = true;
+                return grants;
+            }
+        }
+        grants.defaultRole =
+            properties.getProperty(DEFAULT_ROLE_PROPERTY, "").trim();
         for (String key : properties.stringPropertyNames()) {
             if (!key.startsWith(PROPERTY_PREFIX)
                 || key.equals(DEFAULT_ROLE_PROPERTY))
@@ -423,6 +459,128 @@ public class ServerPermissions {
                 grant, Arrays.asList(splitGroups(properties.getProperty(key))));
         }
         return grants;
+    }
+
+    /** {@link #SECURITY_FILE_PROPERTY}, or null when it is not set. */
+    public static String securityFile() {
+        final String file = System.getProperty(SECURITY_FILE_PROPERTY);
+        return file == null || file.trim().isEmpty() ? null : file.trim();
+    }
+
+    /**
+     * The security file, read on every call and parsed again when its bytes
+     * change. Rereading a file of a few lines per administrative check costs
+     * nothing next to the request, and unlike a modification time it cannot
+     * miss a change (two edits within the clock's resolution, a file swapped
+     * in by rename on a bind mount).
+     */
+    private static final class SecurityFile {
+        /** The bytes last parsed and what they gave; null before the first read. */
+        private static byte[] lastBytes;
+        private static java.util.Properties lastProperties;
+        /** The last problem logged, so a broken file is reported once, not per check. */
+        private static String lastProblem;
+        private static boolean warnedAboutOtherSources;
+
+        /** The file's grants, or null when it cannot be used (logged). */
+        static synchronized java.util.Properties read(String file) {
+            final byte[] bytes;
+            try {
+                bytes = java.nio.file.Files.readAllBytes(
+                    java.nio.file.Paths.get(file));
+            } catch (java.io.IOException | RuntimeException e) {
+                return problem(
+                    "cannot read " + file + " (" + e + ")");
+            }
+            if (lastBytes != null && Arrays.equals(bytes, lastBytes)) {
+                return lastProperties;
+            }
+            final java.util.Properties properties = new java.util.Properties();
+            try {
+                properties.load(new java.io.InputStreamReader(
+                    new java.io.ByteArrayInputStream(bytes),
+                    java.nio.charset.StandardCharsets.UTF_8));
+            } catch (java.io.IOException | IllegalArgumentException e) {
+                return problem("cannot parse " + file + " (" + e + ")");
+            }
+            for (String key : properties.stringPropertyNames()) {
+                if (!key.startsWith(PROPERTY_PREFIX)) {
+                    return problem(
+                        "'" + key + "' in " + file + " is not a grant;"
+                        + " the file takes only " + PROPERTY_PREFIX
+                        + "<right>.<value>=<roles> lines and "
+                        + DEFAULT_ROLE_PROPERTY
+                        + (key.equals(TRUST_FORWARDED_HEADERS_PROPERTY)
+                            ? " (" + key + " is a start-up -D option)"
+                            : ""));
+                }
+            }
+            if (!warnedAboutOtherSources) {
+                warnedAboutOtherSources = true;
+                final List<String> ignored = new ArrayList<String>();
+                for (String key
+                    : MondrianProperties.instance().stringPropertyNames())
+                {
+                    if (key.startsWith(PROPERTY_PREFIX)) {
+                        ignored.add(key);
+                    }
+                }
+                if (!ignored.isEmpty()) {
+                    LOGGER.warn(
+                        "ServerPermissions: the grants come from " + file
+                        + " (" + SECURITY_FILE_PROPERTY + "); " + ignored
+                        + " in mondrian.properties or -D options are"
+                        + " ignored.");
+                }
+            }
+            LOGGER.info(
+                "ServerPermissions: "
+                + (lastProperties == null ? "read " : "reread ") + file
+                + changes(lastProperties, properties));
+            lastBytes = bytes;
+            lastProperties = properties;
+            lastProblem = null;
+            return properties;
+        }
+
+        private static java.util.Properties problem(String problem) {
+            if (!problem.equals(lastProblem)) {
+                lastProblem = problem;
+                LOGGER.error(
+                    "ServerPermissions: " + problem
+                    + ". Until it is fixed, every server-level grant is"
+                    + " denied.");
+            }
+            // forget the last good bytes too: the same file back must be read again
+            lastBytes = null;
+            lastProperties = null;
+            return null;
+        }
+
+        /** ": key old -> new, ..." for the keys that differ. */
+        private static String changes(
+            java.util.Properties before,
+            java.util.Properties after)
+        {
+            final Set<String> keys = new java.util.TreeSet<String>(
+                after.stringPropertyNames());
+            if (before != null) {
+                keys.addAll(before.stringPropertyNames());
+            }
+            final StringBuilder buf = new StringBuilder();
+            for (String key : keys) {
+                final String was =
+                    before == null ? null : before.getProperty(key);
+                final String is = after.getProperty(key);
+                if (was == null ? is == null : was.equals(is)) {
+                    continue;
+                }
+                buf.append(buf.length() == 0 ? ": " : ", ").append(key)
+                    .append(' ').append(was == null ? "(none)" : "'" + was + "'")
+                    .append(" -> ").append(is == null ? "(none)" : "'" + is + "'");
+            }
+            return buf.length() == 0 ? " (no change)" : buf.toString();
+        }
     }
 
     /** Every grant suffix: {@code schema.read}, {@code schema.write}, ... */
@@ -483,8 +641,7 @@ public class ServerPermissions {
             return Decision.UNCONFIGURED;
         }
         final boolean listed = grants.lists(identity);
-        final String defaultRole = MondrianProperties.instance()
-            .getProperty(DEFAULT_ROLE_PROPERTY, "").trim();
+        final String defaultRole = grants.defaultRole;
         for (String value : capability.satisfyingValues) {
             final List<String> roles =
                 grants.roles.get(capability.getAttribute() + "." + value);

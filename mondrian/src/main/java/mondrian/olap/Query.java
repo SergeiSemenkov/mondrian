@@ -2874,9 +2874,22 @@ public class Query extends QueryPart {
             if (leftPredicate == null || rightPredicate == null) {
                 return null;
             }
-            return name.equalsIgnoreCase("AND")
-                ? new AndPredicate(Arrays.asList(leftPredicate, rightPredicate))
-                : new OrPredicate(Arrays.asList(leftPredicate, rightPredicate));
+            if (name.equalsIgnoreCase("AND")) {
+                return new AndPredicate(Arrays.asList(leftPredicate, rightPredicate));
+            }
+            // One OR of every alternative: OrPredicate writes the values of
+            // one column as an IN list, but only among its own children, so
+            // nested ORs (TREATAS or IN over a slicer's thousand keys) were
+            // written nested as deep, past ClickHouse's parse depth of 1000.
+            final List<StarPredicate> alternatives = new ArrayList<StarPredicate>();
+            for (StarPredicate p : Arrays.asList(leftPredicate, rightPredicate)) {
+                if (p.getClass() == OrPredicate.class) {
+                    alternatives.addAll(((OrPredicate) p).getChildren());
+                } else {
+                    alternatives.add(p);
+                }
+            }
+            return new OrPredicate(alternatives);
         }
 
         if (name.equalsIgnoreCase("IsEmpty") && fc.getArgCount() == 1) {
@@ -3096,6 +3109,34 @@ public class Query extends QueryPart {
                     buf.append(" = ");
                     Dialect.Datatype.String.quoteValue(
                         buf, sqlQuery.getDialect(), key.toString());
+                }
+            }
+
+            /** Not in an IN list when toSql writes no plain value. */
+            @Override
+            public mondrian.rolap.BitKey checkInList(
+                mondrian.rolap.BitKey inListLHSBitKey)
+            {
+                final mondrian.rolap.BitKey key = super.checkInList(inListLHSBitKey);
+                if (getConstrainedColumn().getDatatype() != null
+                    && getConstrainedColumn().getDatatype().isNumeric()
+                    && parseNumber(getValue().toString()) == null)
+                {
+                    key.clear();
+                }
+                return key;
+            }
+
+            /** As toSql writes the value: a number, or a quoted string. */
+            @Override
+            public void toInListSql(SqlQuery sqlQuery, StringBuilder buf) {
+                if (getConstrainedColumn().getDatatype() != null
+                    && getConstrainedColumn().getDatatype().isNumeric())
+                {
+                    buf.append(parseNumber(getValue().toString()).toPlainString());
+                } else {
+                    Dialect.Datatype.String.quoteValue(
+                        buf, sqlQuery.getDialect(), getValue().toString());
                 }
             }
         };

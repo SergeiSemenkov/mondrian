@@ -40,6 +40,7 @@ public class RolapNativeSql {
 
     CompositeSqlCompiler numericCompiler;
     CompositeSqlCompiler booleanCompiler;
+    CompositeSqlCompiler stringCompiler;
 
     RolapStoredMeasure storedMeasure;
     final AggStar aggStar;
@@ -614,6 +615,158 @@ public class RolapNativeSql {
     }
 
     /**
+     * Compiles a chain of ORs as one flat disjunction, the comparisons of one
+     * expression with a literal as an IN list: {@code (a = 1) OR (a = 2) OR
+     * (b = 3)} becomes {@code (a IN (1, 2) OR (b = 3))}. Written pairwise, a
+     * chain nested once per value (DAX's TREATAS or IN over a Power BI slicer's
+     * thousand keys) gave SQL nested as deep, and ClickHouse refuses a parse
+     * depth over 1000. A comparison is put in the list only when it compiled
+     * to exactly {@code (expr = literal)}, so what each one means is unchanged.
+     */
+    class OrSqlCompiler implements SqlCompiler {
+        public String compile(Exp exp) {
+            if (!isOr(exp)) {
+                return null;
+            }
+            final List<Exp> terms = new ArrayList<Exp>();
+            final java.util.Deque<Exp> pending = new java.util.ArrayDeque<Exp>();
+            pending.push(exp);
+            while (!pending.isEmpty()) {
+                final Exp e = unwrap(pending.pop());
+                if (isOr(e)) {
+                    final Exp[] args = ((FunCall) e).getArgs();
+                    pending.push(args[1]);
+                    pending.push(args[0]);
+                } else {
+                    terms.add(e);
+                }
+            }
+            // in order of first appearance: an expression with its values,
+            // or a term's own SQL (value list null)
+            final java.util.Map<String, List<String>> inLists =
+                new java.util.LinkedHashMap<String, List<String>>();
+            final List<Object> parts = new ArrayList<Object>();
+            for (Exp term : terms) {
+                final String sql = booleanCompiler.compile(term);
+                if (sql == null) {
+                    return null;
+                }
+                final String[] equality = equality(term, sql);
+                if (equality == null) {
+                    parts.add(sql);
+                    continue;
+                }
+                List<String> values = inLists.get(equality[0]);
+                if (values == null) {
+                    values = new ArrayList<String>();
+                    inLists.put(equality[0], values);
+                    parts.add(new String[] {equality[0]});
+                }
+                values.add(equality[1]);
+            }
+            final StringBuilder buf = new StringBuilder("(");
+            for (Object part : parts) {
+                if (buf.length() > 1) {
+                    buf.append(" OR ");
+                }
+                if (part instanceof String) {
+                    buf.append((String) part);
+                    continue;
+                }
+                final String expr = ((String[]) part)[0];
+                final List<String> values = inLists.get(expr);
+                if (values.size() == 1) {
+                    buf.append("(").append(expr).append(" = ")
+                        .append(values.get(0)).append(")");
+                } else {
+                    buf.append(expr).append(" IN (");
+                    for (int i = 0; i < values.size(); i++) {
+                        if (i > 0) {
+                            buf.append(", ");
+                        }
+                        buf.append(values.get(i));
+                    }
+                    buf.append(")");
+                }
+            }
+            return buf.append(")").toString();
+        }
+
+        private boolean isOr(Exp exp) {
+            return exp instanceof FunCall
+                && "or".equalsIgnoreCase(((FunCall) exp).getFunName())
+                && ((FunCall) exp).getArgs().length == 2
+                && (exp.getCategory() & Category.Logical) != 0;
+        }
+
+        private Exp unwrap(Exp exp) {
+            while (exp instanceof FunCall
+                && "()".equals(((FunCall) exp).getFunName())
+                && ((FunCall) exp).getArgs().length == 1)
+            {
+                exp = ((FunCall) exp).getArgs()[0];
+            }
+            return exp;
+        }
+
+        /**
+         * {expr, literal} when {@code term} is a comparison of an expression
+         * with a literal and compiled to exactly {@code (expr = literal)};
+         * otherwise null.
+         */
+        private String[] equality(Exp term, String sql) {
+            if (!(term instanceof FunCall)
+                || !"=".equals(((FunCall) term).getFunName())
+                || ((FunCall) term).getArgs().length != 2)
+            {
+                return null;
+            }
+            final Exp[] args = ((FunCall) term).getArgs();
+            for (int i = 0; i < 2; i++) {
+                if (!(args[1 - i] instanceof Literal)) {
+                    continue;
+                }
+                for (SqlCompiler compiler
+                    : new SqlCompiler[] {stringCompiler, numericCompiler})
+                {
+                    lastPropertyIsNumericKey = false;
+                    final String expr = compiler.compile(args[i]);
+                    final boolean numericKey = lastPropertyIsNumericKey;
+                    final String value = compiler.compile(args[1 - i]);
+                    if (expr == null || value == null) {
+                        continue;
+                    }
+                    final String written = i == 0
+                        ? "(" + expr + " = " + value + ")"
+                        : "(" + value + " = " + expr + ")";
+                    if (!written.equals(sql)) {
+                        continue;
+                    }
+                    final Object literal = ((Literal) args[1 - i]).getValue();
+                    if (numericKey && literal instanceof String) {
+                        // a numeric key against the text of a number: "=" lets
+                        // the database convert it, an IN list of quoted values
+                        // is a type error (HSQLDB), so the number goes in plain
+                        try {
+                            return new String[] {expr,
+                                new BigDecimal(((String) literal).trim())
+                                    .toPlainString()};
+                        } catch (NumberFormatException e) {
+                            return null;
+                        }
+                    }
+                    return new String[] {expr, value};
+                }
+            }
+            return null;
+        }
+
+        public String toString() {
+            return "OrSqlCompiler";
+        }
+    }
+
+    /**
      * Compiles an <code>IsEmpty(measure)</code>
      * expression into SQL <code>measure is null</code>.
      */
@@ -862,7 +1015,7 @@ public class RolapNativeSql {
         booleanCompiler = new CompositeSqlCompiler();
 
         // Create string compiler for string comparisons
-        CompositeSqlCompiler stringCompiler = new CompositeSqlCompiler();
+        stringCompiler = new CompositeSqlCompiler();
 
         numericCompiler.add(new NumberSqlCompiler());
         numericCompiler.add(new StoredMeasureSqlCompiler());
@@ -930,9 +1083,7 @@ public class RolapNativeSql {
         booleanCompiler.add(
             new InfixOpSqlCompiler(
                 Category.Logical, "and", "AND", booleanCompiler));
-        booleanCompiler.add(
-            new InfixOpSqlCompiler(
-                Category.Logical, "or", "OR", booleanCompiler));
+        booleanCompiler.add(new OrSqlCompiler());
         booleanCompiler.add(
             new UnaryOpSqlCompiler(
                 Category.Logical, "not", "NOT", booleanCompiler));
