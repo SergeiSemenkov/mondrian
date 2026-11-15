@@ -27,6 +27,9 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.security.Principal;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -280,7 +283,7 @@ public class ServerPermissions {
                 }
             };
         }
-        if (!trustForwardedHeaders()) {
+        if (!trustsForwardedHeaders(request)) {
             return ANONYMOUS;
         }
         return identity(
@@ -288,10 +291,132 @@ public class ServerPermissions {
             splitGroups(request.getHeader("X-Forwarded-Groups")));
     }
 
-    /** Whether the X-Forwarded-* headers may be believed. */
-    private static boolean trustForwardedHeaders() {
+    /**
+     * Environment variable holding the secret the authentication gateway
+     * sends with every request it forwards ({@link #FORWARDED_SECRET_HEADER}).
+     * The {@code X-Forwarded-*} identity headers are believed only on a
+     * request that carries it, so a caller that reaches this server around the
+     * gateway (from the host, or from another container on its network)
+     * cannot name itself a user. An environment variable, not a system
+     * property: {@code -D} options are visible in the process list and the JVM
+     * prints {@code JAVA_TOOL_OPTIONS} at start.
+     */
+    public static final String FORWARDED_SECRET_ENV =
+        "EMONDRIAN_FORWARDED_SECRET";
+
+    /** The request header carrying the gateway's secret. */
+    public static final String FORWARDED_SECRET_HEADER = "X-Forwarded-Secret";
+
+    /** The headers that name a caller, believed only with the secret. */
+    public static final String[] FORWARDED_IDENTITY_HEADERS = {
+        "X-Forwarded-User", "X-Forwarded-Groups", "X-Forwarded-Client",
+        "X-Forwarded-Access-Token"
+    };
+
+    /**
+     * Request attribute {@link ForwardedHeadersFilter} sets on a request whose
+     * secret it checked and found right; it then hides the header itself from
+     * everything after it. A client cannot set a request attribute.
+     */
+    public static final String FORWARDED_TRUSTED_ATTRIBUTE =
+        "mondrian.server.forwardedHeadersTrusted";
+
+    /** Shorter secrets are refused, as if none were set. */
+    static final int MIN_FORWARDED_SECRET_LENGTH = 32;
+
+    /** SHA-256 of the secret, or null when there is none (or it is too short). */
+    private static volatile byte[] forwardedSecretDigest =
+        secretDigest(System.getenv(FORWARDED_SECRET_ENV));
+
+    static byte[] secretDigest(String secret) {
+        if (secret == null || secret.trim().length() < MIN_FORWARDED_SECRET_LENGTH) {
+            return null;
+        }
+        return sha256(secret.trim());
+    }
+
+    private static byte[] sha256(String value) {
+        try {
+            return MessageDigest.getInstance("SHA-256")
+                .digest(value.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** For tests: the secret as if read from {@link #FORWARDED_SECRET_ENV}. */
+    static void setForwardedSecret(String secret) {
+        forwardedSecretDigest = secretDigest(secret);
+    }
+
+    /** Whether -Demondrian.security.trustForwardedUser=true is set. */
+    public static boolean trustForwardedHeaders() {
         return Boolean.parseBoolean(
             System.getProperty(TRUST_FORWARDED_HEADERS_PROPERTY, "false"));
+    }
+
+    /** Whether a secret is configured, so that forwarded headers can be believed at all. */
+    public static boolean forwardedSecretConfigured() {
+        return forwardedSecretDigest != null;
+    }
+
+    /**
+     * Whether this request's {@code X-Forwarded-*} identity headers may be
+     * believed: trust is switched on, a secret is configured, and the request
+     * carries it (checked by {@link ForwardedHeadersFilter}, or here in
+     * constant time when that filter is not installed). Fails closed: with
+     * trust on and no secret configured, nothing is believed.
+     */
+    public static boolean trustsForwardedHeaders(HttpServletRequest request) {
+        if (request == null || !trustForwardedHeaders()) {
+            return false;
+        }
+        final byte[] expected = forwardedSecretDigest;
+        if (expected == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(request.getAttribute(FORWARDED_TRUSTED_ATTRIBUTE))) {
+            return true;
+        }
+        return secretMatches(request.getHeader(FORWARDED_SECRET_HEADER));
+    }
+
+    /** Constant-time comparison of a presented secret with the configured one. */
+    static boolean secretMatches(String presented) {
+        final byte[] expected = forwardedSecretDigest;
+        if (expected == null || presented == null) {
+            return false;
+        }
+        return MessageDigest.isEqual(expected, sha256(presented.trim()));
+    }
+
+    /** Whether the request names a caller in any {@code X-Forwarded-*} identity header. */
+    public static boolean carriesForwardedIdentity(HttpServletRequest request) {
+        for (String name : FORWARDED_IDENTITY_HEADERS) {
+            final String value = request.getHeader(name);
+            if (value != null && !value.trim().isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Logs at start whether forwarded identity headers are believed, never the secret. */
+    public static void logForwardedTrust() {
+        if (!trustForwardedHeaders()) {
+            return;
+        }
+        if (forwardedSecretConfigured()) {
+            LOGGER.info(TRUST_FORWARDED_HEADERS_PROPERTY + "=true: X-Forwarded-User/-Groups"
+                + " are believed only on requests carrying the gateway's "
+                + FORWARDED_SECRET_HEADER + "; other requests that carry them are refused.");
+        } else {
+            LOGGER.error(TRUST_FORWARDED_HEADERS_PROPERTY + "=true, but " + FORWARDED_SECRET_ENV
+                + " is not set (or shorter than " + MIN_FORWARDED_SECRET_LENGTH + " characters):"
+                + " X-Forwarded-User/-Groups are NOT believed, and every request carrying them is"
+                + " refused. Set " + FORWARDED_SECRET_ENV + " to the same value as the"
+                + " authentication gateway's (auth/scripts/init.sh writes it to .env).");
+        }
     }
 
     /** Splits a comma-separated group header into names. Null-safe. */

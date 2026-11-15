@@ -13,6 +13,8 @@ package mondrian.xmla;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import jakarta.servlet.DispatcherType;
+import jakarta.servlet.FilterRegistration;
 import jakarta.servlet.ServletContext;
 import jakarta.servlet.ServletContextEvent;
 import jakarta.servlet.ServletContextListener;
@@ -26,6 +28,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -95,6 +98,17 @@ public class MondrianModuleServletRegistrar implements ServletContextListener {
         modulesPath = resolved;
 
         LOGGER.info("MondrianModuleServletRegistrar: modulesPath=" + resolved);
+
+        // Forwarded identity headers: believed only with the gateway's secret, and the secret
+        // hidden from everything after the filter. Ahead of the filters in web.xml.
+        FilterRegistration.Dynamic forwarded = ctx.addFilter(
+            "emondrianForwardedHeaders", new mondrian.server.ForwardedHeadersFilter());
+        if (forwarded != null) {
+            forwarded.setAsyncSupported(true);
+            forwarded.addMappingForUrlPatterns(
+                EnumSet.of(DispatcherType.REQUEST), false, "/*");
+        }
+        mondrian.server.ServerPermissions.logForwardedTrust();
 
         // JDBC drivers installed at run time (install_driver), before anything connects.
         mondrian.util.JdbcDriverDirectory.setDefaultDirectory(ctx.getRealPath("/drivers"));
