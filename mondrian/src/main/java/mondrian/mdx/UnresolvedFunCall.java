@@ -98,6 +98,13 @@ public class UnresolvedFunCall extends ExpBase implements FunCall {
     }
 
     public Exp accept(Validator validator) {
+        // [Employees].[Level 01] ... : the per-depth levels MDSCHEMA_LEVELS reports for a
+        // parent-child hierarchy, which are no Level objects (ParentChildDepthLevels).
+        final Exp depthLevelCall =
+            mondrian.olap.fun.ParentChildDepthLevels.rewrite(this, validator);
+        if (depthLevelCall != null) {
+            return depthLevelCall;
+        }
         Exp[] newArgs = new Exp[args.length];
         FunDef funDef =
             FunUtil.resolveFunArgs(

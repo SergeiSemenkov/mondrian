@@ -1014,6 +1014,17 @@ public class XmlaHandler {
     private final List<XmlaRequest> currentRequests =
         new java.util.concurrent.CopyOnWriteArrayList<XmlaRequest>();
 
+    /**
+     * The cause of the fault a request canceled by an XML/A {@code Cancel} answers with.
+     * {@code XmlaServlet} logs it as one INFO line: a client canceling is routine (ADOMD.NET
+     * cancels every result it closes before reading it all, so Power Query's previews end in one).
+     */
+    public static final class CanceledByClientException extends Exception {
+        public CanceledByClientException() {
+            super("The query was canceled by user.");
+        }
+    }
+
     private void checkedCanceled(XmlaRequest request) {
         String canceled = request.getProperties().get("CANCELED");
         if(canceled != null && canceled.equals("true")) {
@@ -1021,8 +1032,24 @@ public class XmlaHandler {
                     CLIENT_FAULT_FC,
                     "3238658121",
                     "",
-                    new Exception("The query was canceled by user.")
+                    new CanceledByClientException()
             );
+        }
+    }
+
+    /**
+     * Marks the requests running in a session as canceled, except the Cancel request itself: it is
+     * in {@link #currentRequests} too, with the same session, and marking it made every Cancel
+     * answer with "The query was canceled by user." although it had done its job.
+     */
+    private void markCanceled(XmlaRequest cancelRequest, String sessionId) {
+        if (sessionId == null) {
+            return;
+        }
+        for (XmlaRequest xmlaRequest : currentRequests) {
+            if (xmlaRequest != cancelRequest && sessionId.equals(xmlaRequest.getSessionId())) {
+                ((mondrian.xmla.impl.DefaultXmlaRequest) xmlaRequest).setProperty("CANCELED", "true");
+            }
         }
     }
 
@@ -1070,11 +1097,7 @@ public class XmlaHandler {
                     final mondrian.rolap.RolapConnection rolapConnection1 =
                             ((mondrian.olap4j.MondrianOlap4jConnection) connection1).getMondrianConnection();
 
-                    for(XmlaRequest xmlaRequest: currentRequests){
-                        if(xmlaRequest.getSessionId().equals(rolapConnection1.getConnectInfo().get("sessionId"))){
-                            ((mondrian.xmla.impl.DefaultXmlaRequest)xmlaRequest).setProperty("CANCELED", "true");
-                        }
-                    }
+                    markCanceled(request, rolapConnection1.getConnectInfo().get("sessionId"));
 
                     mondrian.olap.MondrianServer mondrianServer =
                             mondrian.olap.MondrianServer.forConnection(rolapConnection1);
@@ -1084,11 +1107,7 @@ public class XmlaHandler {
                             statement.cancel();
                         }
                     }
-                    for(XmlaRequest xmlaRequest: currentRequests){
-                        if(xmlaRequest.getSessionId().equals(sessionId)){
-                            ((mondrian.xmla.impl.DefaultXmlaRequest)xmlaRequest).setProperty("CANCELED", "true");
-                        }
-                    }
+                    markCanceled(request, sessionId);
                 } catch (org.olap4j.OlapException oe) {
                     throw new XmlaException(
                             CLIENT_FAULT_FC,

@@ -6307,8 +6307,11 @@ TODO: see above
                 return false;
             }
 
-            // Count the members at each depth. Depth 1 is the hierarchy's root members: a
-            // parent-child member's depth is its parent's plus one, and the All member is depth 0.
+            // Count the members at each depth. Level 01 is the hierarchy's root members: a
+            // parent-child member's depth is its parent's plus one, with the All member at 0, so
+            // the roots are at 1 under an All member and at 0 without one (they used to be left
+            // out then). ParentChildDepthLevels numbers the levels the same way in MDX.
+            final int rootOffset = hierarchy.hasAll() ? 0 : 1;
             final List<Integer> membersByDepth = new ArrayList<Integer>();
             try {
                 final List<Member> members = parentChildLevel.getMembers();
@@ -6316,7 +6319,7 @@ TODO: see above
                     return false;
                 }
                 for (Member member : members) {
-                    final int depth = member.getDepth();
+                    final int depth = member.getDepth() + rootOffset;
                     if (depth < 1) {
                         continue;
                     }

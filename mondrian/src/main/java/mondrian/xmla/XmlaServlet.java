@@ -38,6 +38,22 @@ public abstract class XmlaServlet
 {
     protected static final Logger LOGGER = LogManager.getLogger(XmlaServlet.class);
 
+    /**
+     * Logs the fault a request answers with. A request the client canceled is one INFO line:
+     * clients cancel routinely (ADOMD.NET cancels every result it closes unread, so each Power
+     * Query preview ends in a Cancel) and a stack trace per cancel buried the real errors.
+     */
+    static void logFault(XmlaException xex) {
+        Throwable root = XmlaException.getRootCause(xex);
+        if (root instanceof XmlaHandler.CanceledByClientException
+            || root instanceof mondrian.olap.QueryCanceledException)
+        {
+            LOGGER.info("XML/A request canceled by the client: " + root.getMessage());
+        } else {
+            LOGGER.error("Errors when handling XML/A message", xex);
+        }
+    }
+
     public static final String PARAM_DATASOURCES_CONFIG = "DataSourcesConfig";
     public static final String PARAM_OPTIONAL_DATASOURCE_CONFIG =
         "OptionalDataSourceConfig";
@@ -293,7 +309,7 @@ public abstract class XmlaServlet
                     responseSoapParts,
                     context);
             } catch (XmlaException xex) {
-                LOGGER.error("Errors when handling XML/A message", xex);
+                logFault(xex);
                 handleFault(response, responseSoapParts, phase, xex);
                 phase = Phase.SEND_ERROR;
                 marshallSoapMessage(response, responseSoapParts, mimeType);
@@ -346,7 +362,7 @@ public abstract class XmlaServlet
                     responseSoapParts,
                     context);
             } catch (XmlaException xex) {
-                LOGGER.error("Errors when handling XML/A message", xex);
+                logFault(xex);
                 handleFault(response, responseSoapParts, phase, xex);
                 phase = Phase.SEND_ERROR;
                 marshallSoapMessage(response, responseSoapParts, mimeType);
@@ -396,7 +412,7 @@ public abstract class XmlaServlet
                 response.setStatus(HttpServletResponse.SC_OK);
                 marshallSoapMessage(response, responseSoapParts, mimeType);
             } catch (XmlaException xex) {
-                LOGGER.error("Errors when handling XML/A message", xex);
+                logFault(xex);
                 // Same rule as the outer catch below: a fault can only be sent while nothing
                 // has been. marshallSoapMessage can throw after writing part of the body, and
                 // appending a fault to that would produce a body no client can parse.
