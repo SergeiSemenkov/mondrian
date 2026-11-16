@@ -102,7 +102,16 @@ public class ServerPermissions {
          * capabilities it is never granted by default: see
          * {@link #mayImpersonate}.
          */
-        IMPERSONATE("impersonate", false, "allow");
+        IMPERSONATE("impersonate", false, "allow"),
+        /**
+         * Administering every dashboard of the Dashboard application: reading,
+         * changing and deleting any of them and giving rights on it. The
+         * engine does not enforce it; the Dashboard reads this grant from the
+         * same security file. It is listed here so that the file may carry it
+         * (an unknown key denies every grant). Like {@link #IMPERSONATE} it is
+         * never held unless listed: see {@link #mayManageDashboards}.
+         */
+        DASHBOARD_MANAGE("dashboard", false, "manage");
 
         private final String attribute;
         private final boolean catalogScoped;
@@ -808,6 +817,19 @@ public class ServerPermissions {
      */
     public static boolean mayImpersonate(Identity identity) {
         return decideAtServerLevel(identity, Capability.IMPERSONATE)
+            == Decision.GRANTED;
+    }
+
+    /**
+     * Whether {@code identity} administers dashboards
+     * ({@code mondrian.security.dashboard.manage}). Explicit only, like
+     * {@link #mayImpersonate}: with no line nobody holds it, because on an
+     * open server "everyone administers" would hand every user every other
+     * user's dashboards. The Dashboard application decides the same way from
+     * the same file.
+     */
+    public static boolean mayManageDashboards(Identity identity) {
+        return decideAtServerLevel(identity, Capability.DASHBOARD_MANAGE)
             == Decision.GRANTED;
     }
 
