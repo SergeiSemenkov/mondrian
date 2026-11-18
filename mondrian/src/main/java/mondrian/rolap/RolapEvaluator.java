@@ -103,6 +103,17 @@ public class RolapEvaluator implements Evaluator {
   private int calcBaseAggregationCount;
 
   /**
+   * The hierarchies, by ordinal in the cube, whose role total (a role's
+   * partial rollup: the sum of the members it may see) is being evaluated;
+   * null when none. That total is the cell's own coordinate as the role sees
+   * it, not a calculation moving the cell elsewhere: the members it adds up are
+   * not moves for {@link #getColumnsMovedByCalculation}. Counted as moves, they
+   * dropped a subcube's condition on the same columns, and a user who sees only
+   * CA got CA's total under a filter on WA or on a state that does not exist.
+   */
+  private boolean[] roleRollupHierarchies;
+
+  /**
    * List of lists of tuples or members, rarely used, but overrides the ordinary dimensional context if set when a cell
    * value comes to be evaluated.
    */
@@ -169,6 +180,7 @@ public class RolapEvaluator implements Evaluator {
     calculationCount = parent.calculationCount;
     calcBaseMembers = parent.calcBaseMembers;
     calcBaseAggregationCount = parent.calcBaseAggregationCount;
+    roleRollupHierarchies = parent.roleRollupHierarchies;
     slicerMembers = new ArrayList<Member>( parent.slicerMembers );
     slicerMembersByHierarchy = new HashMap<Hierarchy, Set<Member>>( parent.slicerMembersByHierarchy );
     slicerTuples = parent.slicerTuples;
@@ -824,6 +836,13 @@ public class RolapEvaluator implements Evaluator {
       calcBaseMembers = currentMembers.clone();
       calcBaseAggregationCount = aggregationLists == null ? 0 : aggregationLists.size();
     }
+    final boolean[] outerRoleRollups = roleRollupHierarchies;
+    if ( maxSolveMember instanceof RolapHierarchy.LimitedRollupMember ) {
+      final boolean[] rollups = outerRoleRollups == null
+          ? new boolean[currentMembers.length] : outerRoleRollups.clone();
+      rollups[maxSolveMember.getHierarchyOrdinal()] = true;
+      roleRollupHierarchies = rollups;
+    }
     maxSolveMember.setContextIn( this );
     final Calc calc = maxSolveMember.getCompiledExpression( root );
     final Object o;
@@ -831,6 +850,7 @@ public class RolapEvaluator implements Evaluator {
       o = calc.evaluate( this );
     } finally {
       restore( savepoint );
+      roleRollupHierarchies = outerRoleRollups;
       if ( outermost ) {
         calcBaseMembers = null;
       }
@@ -1459,7 +1479,8 @@ public class RolapEvaluator implements Evaluator {
     BitKey moved = template.emptyCopy();
     for ( int i = 0; i < currentMembers.length; i++ ) {
       final RolapMember member = currentMembers[i];
-      if ( member != calcBaseMembers[i] && !member.isAll() && !member.isMeasure() && !member.isCalculated() ) {
+      if ( member != calcBaseMembers[i] && !member.isAll() && !member.isMeasure() && !member.isCalculated()
+          && !isRoleRollup( member ) ) {
         addLevelColumns( member, baseCube, moved );
       }
     }
@@ -1467,7 +1488,7 @@ public class RolapEvaluator implements Evaluator {
       for ( int i = calcBaseAggregationCount; i < aggregationLists.size(); i++ ) {
         for ( List<Member> tuple : aggregationLists.get( i ) ) {
           for ( Member member : tuple ) {
-            if ( !member.isAll() && !member.isMeasure() && !member.isCalculated() ) {
+            if ( !member.isAll() && !member.isMeasure() && !member.isCalculated() && !isRoleRollup( member ) ) {
               addLevelColumns( member, baseCube, moved );
             }
           }
@@ -1475,6 +1496,18 @@ public class RolapEvaluator implements Evaluator {
       }
     }
     return moved;
+  }
+
+  /** Whether {@code member} is one the role's total for its hierarchy is adding up. */
+  private boolean isRoleRollup( Member member ) {
+    if ( roleRollupHierarchies == null ) {
+      return false;
+    }
+    if ( !( member.getHierarchy() instanceof RolapHierarchy ) ) {
+      return false;
+    }
+    final int ordinal = ( (RolapHierarchy) member.getHierarchy() ).getOrdinalInCube();
+    return ordinal >= 0 && ordinal < roleRollupHierarchies.length && roleRollupHierarchies[ordinal];
   }
 
   private static void addLevelColumns( Member member, RolapCube baseCube, BitKey into ) {
