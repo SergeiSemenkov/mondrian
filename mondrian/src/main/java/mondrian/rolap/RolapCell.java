@@ -729,11 +729,44 @@ public class RolapCell implements Cell {
         }
         final Evaluator evaluator = result.getRootEvaluator();
         final int savepoint = evaluator.savepoint();
+        final Object value;
         try {
             result.populateEvaluator(evaluator, pos);
-            return evaluator.getProperty(propertyName, defaultValue);
+            value = evaluator.getProperty(propertyName, defaultValue);
         } finally {
             evaluator.restore(savepoint);
+        }
+        if (value == null
+            && (property != null
+                ? property.ordinal == Property.LANGUAGE_ORDINAL
+                : Property.LANGUAGE.getName().equalsIgnoreCase(propertyName)))
+        {
+            return connectionLcid();
+        }
+        return value;
+    }
+
+    /**
+     * LANGUAGE, when no member sets it: the LCID of the connection's locale
+     * (an XML/A LocaleIdentifier sets it), as Analysis Services returns one
+     * for every cell. Excel asks for it with FORMAT_STRING and reads a
+     * format's currency symbol by it; without it, $#,##0.00 measures showed
+     * U+FFFD in Excel instead of $ (Excel pivot checks on the demo,
+     * 2026-11-20).
+     */
+    private Object connectionLcid() {
+        java.util.Locale locale = null;
+        try {
+            locale = result.getExecution().getMondrianStatement()
+                .getMondrianConnection().getLocale();
+        } catch (RuntimeException e) {
+            // no connection to ask: the default below
+        }
+        try {
+            return (long) org.olap4j.impl.LcidLocale.localeToLcid(
+                locale == null ? java.util.Locale.US : locale);
+        } catch (RuntimeException e) {
+            return 1033L;
         }
     }
 

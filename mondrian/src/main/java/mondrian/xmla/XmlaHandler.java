@@ -3221,6 +3221,11 @@ public class XmlaHandler {
 
             Boolean allPropertyIsEmpty = true;
             for(String propertyName: this.queryCellPropertyNames) {
+                // LANGUAGE is the connection's LCID on every cell; it does not
+                // make an empty cell worth sending
+                if (propertyName != null && propertyName.equalsIgnoreCase("LANGUAGE")) {
+                    continue;
+                }
                 if(((mondrian.olap4j.MondrianOlap4jCell)cell).getRolapCell().getPropertyValue(propertyName) != null) {
                     allPropertyIsEmpty = false;
                     break;
