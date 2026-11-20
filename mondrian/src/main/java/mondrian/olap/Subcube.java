@@ -100,5 +100,7 @@ public class Subcube extends QueryPart {
     public Subcube getSubcube() { return this.subcube; }
 
     public QueryAxis[] getAxes() { return this.axes; }
+
+    public QueryAxis getSlicerAxis() { return this.slicerAxis; }
 }
 

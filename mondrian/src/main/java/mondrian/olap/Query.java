@@ -744,6 +744,18 @@ public class Query extends QueryPart {
 
         // Register all aliased expressions ('expr AS alias') as named sets.
         accept(new AliasedExpressionFinder());
+        // ... in the subselects too: Excel's Top N filter is
+        // Generate(set AS [XL_Filter_Set_0], ... [XL_Filter_Set_0].Current ...)
+        // in a subselect, and Query.accept does not visit subselects, so the
+        // alias was "not found" (emondrian-modules ExcelFilterTest, engine .94).
+        for (Subcube s = subcube; s != null; s = s.getSubcube()) {
+            for (QueryAxis axis : s.getAxes()) {
+                axis.accept(new AliasedExpressionFinder());
+            }
+            if (s.getSlicerAxis() != null) {
+                s.getSlicerAxis().accept(new AliasedExpressionFinder());
+            }
+        }
 
         // Validate formulas.
         if (formulas != null) {
@@ -1249,6 +1261,7 @@ public class Query extends QueryPart {
         }
         String name = ((Id.NameSegment) nameParts.get(0)).getName();
         ScopedNamedSet bestScopedNamedSet = null;
+        ScopedNamedSet outOfScope = null;
         int bestScopeOrdinal = -1;
         for (ScopedNamedSet scopedNamedSet : scopedNamedSets) {
             if (Util.equalName(scopedNamedSet.name, name)) {
@@ -1257,9 +1270,16 @@ public class Query extends QueryPart {
                     bestScopedNamedSet = scopedNamedSet;
                     bestScopeOrdinal = scopeOrdinal;
                 }
+                outOfScope = scopedNamedSet;
             }
         }
-        return bestScopedNamedSet;
+        // An alias used outside the function that encloses its AS: Analysis
+        // Services makes an inline named set visible to the rest of the
+        // expression, and Excel's Top N filter relies on it,
+        //   Except(DrilldownLevel(x AS [XL_Filter_HelperSet_0], , 0), [XL_Filter_HelperSet_0])
+        // A set in scope still wins; otherwise the one of that name the query
+        // defines (emondrian-modules ExcelFilterTest, engine .94).
+        return bestScopedNamedSet != null ? bestScopedNamedSet : outOfScope;
     }
 
     /**
@@ -2511,8 +2531,13 @@ public class Query extends QueryPart {
                 // This is important for proper validation in isSupportedNonEmptyFilterCondition
                 final Validator validator = createValidator();
                 axisExp = axisExp.accept(validator);
-                addSetExpressionToSubcubePredicates(
-                    baseCube, listOfSubcubeSets, axisExp, false);
+                predicateSubcube = subcube;
+                try {
+                    addSetExpressionToSubcubePredicates(
+                        baseCube, listOfSubcubeSets, axisExp, false);
+                } finally {
+                    predicateSubcube = null;
+                }
             }
 
             subcube = subcube.getSubcube();
@@ -2651,9 +2676,82 @@ public class Query extends QueryPart {
             // hierarchy" — no dimension restriction to add as a predicate.
             // Simply skip; the dimension is unrestricted.
         } else {
-            throw new UnsupportedOperationException(
-                "Unsupported function in subcube axis: " + funName);
+            // TopCount, Generate, Except, ... (Excel's Top N): the members the set gives
+            addEvaluatedSetToSubcubePredicates(
+                baseCube, listOfSubcubeSets, exp, negated);
         }
+    }
+
+    /** The subselect whose axis is being turned into predicates (for addEvaluatedSet...). */
+    private Subcube predicateSubcube;
+
+    /**
+     * A subselect set that cannot become SQL conditions as written -- a Filter on a caption
+     * (Excel's label filters: Left(...member_caption, 1) = "D"), on a measure (value filters:
+     * [Unit Sales] > 70000), Excel's Top N (Generate, TopCount) -- restricts the cube to the
+     * members it evaluates to. That is what the set means: the subselect keeps those members.
+     * It is evaluated as an MDX query on this connection, so under the same roles, against what
+     * this subselect selects from and with its own WHERE, exactly the context Excel meant.
+     * Before engine .94 these were refused ("Unsupported Filter condition in subcube axis"),
+     * and Excel showed error 0x800A03EC. A set of tuples over several hierarchies is still
+     * refused. Regression: emondrian-modules ExcelFilterTest.
+     */
+    private void addEvaluatedSetToSubcubePredicates(
+        RolapCube baseCube,
+        List<StarPredicate> listOfSubcubeSets,
+        Exp setExp,
+        boolean negated)
+    {
+        if (predicateSubcube == null) {
+            throw new UnsupportedOperationException(
+                "Unsupported expression in subcube axis: " + setExp);
+        }
+        java.io.StringWriter text = new java.io.StringWriter();
+        java.io.PrintWriter pw = new java.io.PrintWriter(text);
+        pw.print("SELECT {");
+        setExp.unparse(pw);
+        pw.print("} ON COLUMNS FROM ");
+        Subcube from = predicateSubcube.getSubcube();
+        if (from != null) {
+            from.unparse(pw);
+        } else {
+            pw.print(Util.quoteMdxIdentifier(predicateSubcube.getCubeName()));
+        }
+        QueryAxis slicer = predicateSubcube.getSlicerAxis();
+        if (slicer != null && slicer.getSet() != null) {
+            pw.print(" WHERE ");
+            slicer.getSet().unparse(pw);
+        }
+        pw.flush();
+        Result result;
+        try {
+            Connection connection = getConnection();
+            result = connection.execute(connection.parseQuery(text.toString()));
+        } catch (RuntimeException e) {
+            throw new UnsupportedOperationException(
+                "Subcube set could not be evaluated: " + setExp + " (" + e.getMessage() + ")", e);
+        }
+        List<Exp> members = new ArrayList<Exp>();
+        for (Position position : result.getAxes()[0].getPositions()) {
+            if (position.size() != 1) {
+                throw new UnsupportedOperationException(
+                    "Unsupported set of tuples in subcube axis: " + setExp);
+            }
+            members.add(new MemberExpr(position.get(0)));
+        }
+        if (members.isEmpty()) {
+            // No member qualifies: the subselect is empty (NOT of it is everything).
+            if (!negated) {
+                listOfSubcubeSets.add(LiteralStarPredicate.FALSE);
+            }
+            return;
+        }
+        addSetToSubcubePredicates(
+            baseCube,
+            listOfSubcubeSets,
+            new UnresolvedFunCall(
+                "{}", Syntax.Braces, members.toArray(new Exp[members.size()])),
+            negated);
     }
 
     /**
@@ -2744,8 +2842,10 @@ public class Query extends QueryPart {
         // Keep supported conditions explicit to avoid silently accepting
         // non-pushdownable filter semantics.
         if (!isSupportedNonEmptyFilterCondition(baseCube, conditionExp)) {
-            throw new UnsupportedOperationException(
-                "Unsupported Filter condition in subcube axis: " + conditionExp);
+            // a caption or a measure: keep the members the Filter gives
+            addEvaluatedSetToSubcubePredicates(
+                baseCube, listOfSubcubeSets, filterFunCall, negated);
+            return;
         }
 
         addSetExpressionToSubcubePredicates(
