@@ -60,19 +60,26 @@ class DrilldownLevelFunDef extends FunDefBase {
                 instanceof mondrian.olap.type.LevelType
                 ? compiler.compileLevel(call.getArg(1))
                 : null;
+        // DrilldownLevel(set, level, INCLUDE_CALC_MEMBERS): the flag as the third of three
+        // arguments, which Excel sends for every drill-down of a user hierarchy. It is not the
+        // tuple index of DrilldownLevel(set, , index): taken for one, the level was ignored and
+        // every member was drilled again, repeating the members an inner DrilldownLevel had
+        // drilled already (Excel showed USA twice). Regression: emondrian-modules
+        // DrilldownLevelCalcMembersTest.
+        final boolean flagThird =
+            call.getArgCount() == 3
+                && call.getArg(2) instanceof Literal
+                && INCLUDE_CALC_MEMBERS.equals(((Literal)call.getArg(2)).getValue());
         final IntegerCalc indexCalc =
             call.getArgCount() > 2
+                && !flagThird
                 && call.getArg(2) != null
                 && !(call.getArg(2).getType() instanceof mondrian.olap.type.EmptyType)
                 ? compiler.compileInteger(call.getArg(2))
                 : null;
         final int arity = listCalc.getType().getArity();
         final boolean includeCalcMembers =
-                (call.getArgCount() == 3
-                        && call.getArg(2) != null
-                        && call.getArg(2) instanceof Literal
-                        && INCLUDE_CALC_MEMBERS.equals(((Literal)call.getArg(2)).getValue())
-                )
+                flagThird
                 || (call.getArgCount() == 4
                     && call.getArg(3) != null
                     && call.getArg(3) instanceof Literal
