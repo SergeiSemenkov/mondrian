@@ -595,6 +595,29 @@ public class RolapMemberBase
         return this.getUniqueName().compareTo(other.getUniqueName());
     }
 
+    /**
+     * A member a level hides for its blank name (hideMemberIf="IfBlankName")
+     * is seen only when a client asks for a ragged hierarchy's hidden members
+     * as placeholders (MDX Compatibility 1, Excel). Its own caption is empty
+     * or "#null", which Excel prints literally; as a placeholder it carries
+     * its parent's caption, the way an IfParentsName placeholder does by
+     * definition (Vatican > Vatican > Vatican, not Vatican > Vatican > #null).
+     * Its name and unique name stay as they are, so queries still find it.
+     */
+    public String getCaption() {
+        final String caption = super.getCaption();
+        if (getLevel().getHideMemberCondition()
+            == RolapLevel.HideMemberCondition.IfBlankName
+            && (caption == null
+                || Util.isBlank(caption)
+                || caption.equals(RolapUtil.mdxNullLiteral()))
+            && getParentMember() != null)
+        {
+            return getParentMember().getCaption();
+        }
+        return caption;
+    }
+
     public boolean isHidden() {
         final RolapLevel rolapLevel = getLevel();
         switch (rolapLevel.getHideMemberCondition()) {
