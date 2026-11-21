@@ -603,6 +603,7 @@ public class RolapMemberBase
      * its parent's caption, the way an IfParentsName placeholder does by
      * definition (Vatican > Vatican > Vatican, not Vatican > Vatican > #null).
      * Its name and unique name stay as they are, so queries still find it.
+     * Any other member with a null key gets a blank caption.
      */
     public String getCaption() {
         final String caption = super.getCaption();
@@ -614,6 +615,15 @@ public class RolapMemberBase
             && getParentMember() != null)
         {
             return getParentMember().getCaption();
+        }
+        // A member whose key is null in the data is named "#null"
+        // (mondrian.olap.NullMemberRepresentation), and that stays its name
+        // and unique name; clients such as Excel print the caption as it is,
+        // so the caption is blank, close to how SSAS shows a null.
+        if (RolapUtil.sqlNullValue.equals(key)
+            && RolapUtil.mdxNullLiteral().equals(caption))
+        {
+            return "";
         }
         return caption;
     }
