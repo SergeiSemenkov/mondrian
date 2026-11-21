@@ -297,6 +297,9 @@ public abstract class RolapNativeSet extends RolapNative {
       key.addAll( Arrays.asList( args ) );
       key.add( maxRows );
       key.add( schemaReader.getRole() );
+      // a list read for a connection that shows a ragged hierarchy's hidden
+      // members must not serve one that hides them, nor the other way round
+      key.add( exposesPlaceholders() );
 
       TupleList result = cache.get( key );
       boolean hasEnumTargets = ( tr.getEnumTargetCount() > 0 );
@@ -400,10 +403,18 @@ public abstract class RolapNativeSet extends RolapNative {
       return new Predicate() {
         public boolean evaluate( Object o ) {
           Member member = (Member) o;
-          return isRaggedLevel( member.getLevel() )
+          return ( isRaggedLevel( member.getLevel() )
+              && !exposesPlaceholders() )
             || isCustomAccess( member.getHierarchy() );
         }
       };
+    }
+
+    /** Whether this set's query shows a ragged hierarchy's hidden members
+     * (MDX Compatibility 1). */
+    private boolean exposesPlaceholders() {
+      return RolapConnection.exposesPlaceholderMembers(
+        constraint.getEvaluator() );
     }
 
     private boolean isRaggedLevel( Level level ) {
@@ -437,7 +448,8 @@ public abstract class RolapNativeSet extends RolapNative {
               constraint
                 .getEvaluator().getSchemaReader().getRole();
             Member member = (Member) o;
-            return member.isHidden() || !role.canAccess( member );
+            return ( member.isHidden() && !exposesPlaceholders() )
+              || !role.canAccess( member );
           }
         };
       }

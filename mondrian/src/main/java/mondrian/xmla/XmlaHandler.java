@@ -393,6 +393,28 @@ public class XmlaHandler {
         }
 
         Session session = Session.getWithoutCheck(sessionId);
+
+        // MDX Compatibility: 1 (Excel's) shows a ragged hierarchy's hidden
+        // members, as SSAS does, so the hierarchy looks balanced to a client
+        // that lays a pivot out level by level.
+        String mdxCompatibility = request.getProperties().get(
+            PropertyDefinition.DbpropMsmdMDXCompatibility.name());
+        if (session != null) {
+            if (mdxCompatibility != null) {
+                session.setMdxCompatibility(mdxCompatibility);
+            } else {
+                mdxCompatibility = session.getMdxCompatibility();
+            }
+        }
+        if (mdxCompatibility != null
+            && connection instanceof MondrianOlap4jConnection)
+        {
+            ((MondrianOlap4jConnection) connection).getMondrianConnection()
+                .setExposePlaceholderMembers(
+                    mondrian.rolap.RolapConnection.exposesPlaceholderMembers(
+                        mdxCompatibility));
+        }
+
         if (session != null) {
             connection.setScenario(session.getScenario());
             // Who is on this session, and against what. Recorded here because

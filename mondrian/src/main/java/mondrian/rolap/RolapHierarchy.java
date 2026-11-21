@@ -947,6 +947,20 @@ public class RolapHierarchy extends HierarchyBase {
      * @post return != null
      */
     MemberReader createMemberReader(Role role) {
+        return createMemberReader(role, false);
+    }
+
+    /**
+     * Creates a member reader which enforces the access-control profile of
+     * {@code role}, and which shows the members this hierarchy's levels hide
+     * (hideMemberIf) when {@code exposePlaceholders} is set: MDX Compatibility
+     * 1, which Excel asks for. Excel lays a pivot out level by level and
+     * cannot place a member whose parent is not on the axis, so for it a
+     * ragged hierarchy has to look balanced, as SSAS shows it to Excel: a
+     * State hidden under Israel appears as [Israel].[Israel].
+     */
+    MemberReader createMemberReader(Role role, boolean exposePlaceholders) {
+        final boolean hideRagged = !exposePlaceholders;
         final Access access = role.getAccess(this);
         switch (access) {
         case NONE:
@@ -964,9 +978,12 @@ public class RolapHierarchy extends HierarchyBase {
                 + " role explicitly (<HierarchyGrant hierarchy=\""
                 + getUniqueName() + "\" ...>).");
         case ALL:
-            return (isRagged())
+            if (!isRagged()) {
+                return getMemberReader();
+            }
+            return hideRagged
                 ? new SmartRestrictedMemberReader(getMemberReader(), role)
-                : getMemberReader();
+                : new PlaceholderMemberReader(getMemberReader());
 
         case CUSTOM:
             final Role.HierarchyAccess hierarchyAccess =
@@ -977,7 +994,7 @@ public class RolapHierarchy extends HierarchyBase {
             switch (rollupPolicy) {
             case FULL:
                 return new SmartRestrictedMemberReader(
-                    getMemberReader(), role);
+                    getMemberReader(), role, hideRagged);
             case PARTIAL:
                 Type memberType1 =
                     new mondrian.olap.type.MemberType(
@@ -1023,7 +1040,8 @@ public class RolapHierarchy extends HierarchyBase {
                         new Exp[0],
                         returnType);
                 return new LimitedRollupSubstitutingMemberReader(
-                    getMemberReader(), role, hierarchyAccess, partialExp);
+                    getMemberReader(), role, hierarchyAccess, partialExp,
+                    hideRagged);
 
             case HIDDEN:
                 Exp hiddenExp =
@@ -1042,7 +1060,8 @@ public class RolapHierarchy extends HierarchyBase {
                         new Exp[0],
                         returnType);
                 return new LimitedRollupSubstitutingMemberReader(
-                    getMemberReader(), role, hierarchyAccess, hiddenExp);
+                    getMemberReader(), role, hierarchyAccess, hiddenExp,
+                    hideRagged);
             default:
                 throw Util.unexpected(rollupPolicy);
             }
@@ -1482,6 +1501,22 @@ public class RolapHierarchy extends HierarchyBase {
      * role has limited access to the hierarchy, replaces members with
      * dummy members which evaluate to the sum of only the accessible children.
      */
+    /**
+     * Member reader of a ragged hierarchy for a connection that shows its
+     * hidden members (MDX Compatibility 1): the underlying reader returns
+     * every member already; only its parent lookup skips the hidden ones,
+     * and here a member's parent is the one above it, placeholder or not.
+     */
+    static class PlaceholderMemberReader extends DelegatingMemberReader {
+        PlaceholderMemberReader(MemberReader memberReader) {
+            super(memberReader);
+        }
+
+        public RolapMember getMemberParent(RolapMember member) {
+            return member.getParentMember();
+        }
+    }
+
     private static class LimitedRollupSubstitutingMemberReader
         extends SubstitutingMemberReader
     {
@@ -1500,11 +1535,12 @@ public class RolapHierarchy extends HierarchyBase {
             MemberReader memberReader,
             Role role,
             Role.HierarchyAccess hierarchyAccess,
-            Exp exp)
+            Exp exp,
+            boolean hideRagged)
         {
             super(
                 new SmartRestrictedMemberReader(
-                    memberReader, role));
+                    memberReader, role, hideRagged));
             this.hierarchyAccess = hierarchyAccess;
             this.exp = exp;
         }

@@ -46,12 +46,22 @@ class RestrictedMemberReader extends DelegatingMemberReader {
      *   memberReader.getHierarchy().isRagged()
      */
     RestrictedMemberReader(MemberReader memberReader, Role role) {
+        this(memberReader, role, true);
+    }
+
+    /**
+     * @param hideRagged Whether the members a ragged hierarchy's levels hide
+     *   stay hidden; false for a connection with MDX Compatibility 1
+     */
+    RestrictedMemberReader(
+        MemberReader memberReader, Role role, boolean hideRagged)
+    {
         super(memberReader);
         this.role = role;
         RolapHierarchy hierarchy = memberReader.getHierarchy();
-        ragged = hierarchy.isRagged();
+        ragged = hideRagged && hierarchy.isRagged();
         if (role.getAccessDetails(hierarchy) == null) {
-            assert ragged;
+            assert hierarchy.isRagged();
             hierarchyAccess = RoleImpl.createAllAccess(hierarchy);
         } else {
             hierarchyAccess = role.getAccessDetails(hierarchy);
@@ -301,7 +311,7 @@ class RestrictedMemberReader extends DelegatingMemberReader {
     public RolapMember getMemberParent(RolapMember member) {
         RolapMember parentMember = member.getParentMember();
         // Skip over hidden parents.
-        while (parentMember != null && parentMember.isHidden()) {
+        while (ragged && parentMember != null && parentMember.isHidden()) {
             parentMember = parentMember.getParentMember();
         }
         // Skip over non-accessible parents.

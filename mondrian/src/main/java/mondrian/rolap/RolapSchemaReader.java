@@ -46,6 +46,7 @@ public class RolapSchemaReader
     private final Map<Hierarchy, MemberReader> hierarchyReaders =
         new ConcurrentHashMap<Hierarchy, MemberReader>();
     protected final RolapSchema schema;
+    private final boolean exposePlaceholders;
     private final SqlConstraintFactory sqlConstraintFactory =
         SqlConstraintFactory.instance();
     private static final Logger LOGGER =
@@ -58,10 +59,28 @@ public class RolapSchemaReader
      * @param schema Schema
      */
     RolapSchemaReader(Role role, RolapSchema schema) {
+        this(role, schema, false);
+    }
+
+    /**
+     * Creates a RolapSchemaReader.
+     *
+     * @param exposePlaceholders Whether the members a ragged hierarchy's
+     *   levels hide are shown (MDX Compatibility 1, what Excel asks for)
+     */
+    RolapSchemaReader(
+        Role role, RolapSchema schema, boolean exposePlaceholders)
+    {
         assert role != null : "precondition: role != null";
         assert schema != null;
         this.role = role;
         this.schema = schema;
+        this.exposePlaceholders = exposePlaceholders;
+    }
+
+    /** Whether this reader shows a ragged hierarchy's hidden members. */
+    public boolean isExposingPlaceholders() {
+        return exposePlaceholders;
     }
 
     public Role getRole() {
@@ -100,7 +119,8 @@ public class RolapSchemaReader
                 memberReader = hierarchyReaders.get(hierarchy);
                 if (memberReader == null) {
                     memberReader =
-                        ((RolapHierarchy) hierarchy).createMemberReader(role);
+                        ((RolapHierarchy) hierarchy).createMemberReader(
+                            role, exposePlaceholders);
                     hierarchyReaders.put(hierarchy, memberReader);
                 }
             }
@@ -370,7 +390,8 @@ public class RolapSchemaReader
         if (role == schema.getDefaultRole()) {
             return this;
         }
-        return new RolapSchemaReader(schema.getDefaultRole(), schema);
+        return new RolapSchemaReader(
+            schema.getDefaultRole(), schema, exposePlaceholders);
     }
 
     public OlapElement getElementChild(OlapElement parent, Id.Segment name) {
@@ -664,7 +685,8 @@ public class RolapSchemaReader
     }
 
     public boolean isVisible(Member member) {
-        return !member.isHidden() && role.canAccess(member);
+        return (exposePlaceholders || !member.isHidden())
+            && role.canAccess(member);
     }
 
     public Cube[] getCubes() {

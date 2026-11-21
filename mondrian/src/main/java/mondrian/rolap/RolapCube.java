@@ -1760,6 +1760,19 @@ public class RolapCube extends CubeBase {
         }
     }
 
+    /**
+     * Returns a schema reader for a role (null: no access control) that
+     * shows, or hides, the members a ragged hierarchy's levels hide -- MDX
+     * Compatibility 1 or 2.
+     */
+    public SchemaReader getSchemaReader(Role role, boolean exposePlaceholders) {
+        if (!exposePlaceholders) {
+            return getSchemaReader(role);
+        }
+        return new RolapCubeSchemaReader(
+            role == null ? Util.createRootRole(schema) : role, true);
+    }
+
     MondrianDef.CubeDimension lookup(
         MondrianDef.CubeDimension[] xmlDimensions,
         String name)
@@ -3345,7 +3358,11 @@ public class RolapCube extends CubeBase {
         implements NameResolver.Namespace
     {
         public RolapCubeSchemaReader(Role role) {
-            super(role, RolapCube.this.schema);
+            this(role, false);
+        }
+
+        RolapCubeSchemaReader(Role role, boolean exposePlaceholders) {
+            super(role, RolapCube.this.schema, exposePlaceholders);
             assert role != null : "precondition: role != null";
         }
 
@@ -3458,7 +3475,7 @@ public class RolapCube extends CubeBase {
         public SchemaReader withoutAccessControl() {
             assert getClass() == RolapCubeSchemaReader.class
                 : "Derived class " + getClass() + " must override method";
-            return RolapCube.this.getSchemaReader();
+            return RolapCube.this.getSchemaReader(null, isExposingPlaceholders());
         }
 
         public Member getMemberByUniqueName(

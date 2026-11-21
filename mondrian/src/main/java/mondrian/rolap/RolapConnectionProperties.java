@@ -147,6 +147,15 @@ public enum RolapConnectionProperties {
   Locale,
 
   /**
+   * How placeholder members of a ragged hierarchy are treated, as SSAS's
+   * "MDX Compatibility" (the XML/A property DbpropMsmdMDXCompatibility):
+   * 0 or 1 exposes them -- a member a level hides (hideMemberIf) is shown,
+   * so the hierarchy appears balanced; 2 hides them. Absent, members are
+   * hidden, as the engine always did. Excel sends 1.
+   */
+  MdxCompatibility,
+
+  /**
    * The name of a class implementing the
    * {@link mondrian.spi.DataSourceChangeListener} interface.
    * A data source change listener is used to flush the cache of

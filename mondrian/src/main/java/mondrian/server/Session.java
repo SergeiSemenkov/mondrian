@@ -307,6 +307,21 @@ public class Session
         this.scenario = scenario;
     }
 
+    /**
+     * The MDX Compatibility the client last sent on this session
+     * (DbpropMsmdMDXCompatibility), null if it never did. Remembered because a
+     * client may send its connection properties on Discover only.
+     */
+    private volatile String mdxCompatibility;
+
+    public String getMdxCompatibility() {
+        return mdxCompatibility;
+    }
+
+    public void setMdxCompatibility(String mdxCompatibility) {
+        this.mdxCompatibility = mdxCompatibility;
+    }
+
     public Scenario getScenario() {
         return this.scenario;
     }

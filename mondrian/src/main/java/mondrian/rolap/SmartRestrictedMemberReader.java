@@ -35,9 +35,17 @@ class SmartRestrictedMemberReader extends RestrictedMemberReader {
         final MemberReader memberReader,
         final Role role)
     {
+        this(memberReader, role, true);
+    }
+
+    SmartRestrictedMemberReader(
+        final MemberReader memberReader,
+        final Role role,
+        final boolean hideRagged)
+    {
         // We want to extend a RestrictedMemberReader with access details
         // that we cache.
-        super(memberReader, role);
+        super(memberReader, role, hideRagged);
     }
 
     // Our little ad-hoc cache.

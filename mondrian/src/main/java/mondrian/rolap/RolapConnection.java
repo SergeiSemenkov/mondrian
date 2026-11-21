@@ -74,6 +74,10 @@ public class RolapConnection extends ConnectionBase {
   private SchemaReader schemaReader;
   protected Role role;
   private Locale locale = Locale.getDefault();
+
+  /** Whether a ragged hierarchy's hidden members are shown, see
+   * {@link RolapConnectionProperties#MdxCompatibility}. */
+  private boolean exposePlaceholderMembers;
   private Scenario scenario;
   private boolean closed = false;
 
@@ -276,7 +280,50 @@ public class RolapConnection extends ConnectionBase {
     }
 
     this.schema = schema;
+    this.exposePlaceholderMembers = exposesPlaceholderMembers(
+      connectInfo.get( RolapConnectionProperties.MdxCompatibility.name() ) );
     setRole( role );
+  }
+
+  /**
+   * Whether an MDX Compatibility value exposes placeholder members: 0 and 1
+   * do (SSAS treats 0 as 1), 2 does not; null -- the client said nothing --
+   * keeps them hidden.
+   */
+  public static boolean exposesPlaceholderMembers( String mdxCompatibility ) {
+    if ( mdxCompatibility == null ) {
+      return false;
+    }
+    String v = mdxCompatibility.trim();
+    return v.equals( "0" ) || v.equals( "1" );
+  }
+
+  /**
+   * Shows (true) or hides (false) the members a ragged hierarchy's levels
+   * hide, for this connection's queries from now on.
+   */
+  public void setExposePlaceholderMembers( boolean expose ) {
+    if ( expose != exposePlaceholderMembers ) {
+      exposePlaceholderMembers = expose;
+      setRole( role );
+    }
+  }
+
+  public boolean isExposePlaceholderMembers() {
+    return exposePlaceholderMembers;
+  }
+
+  /**
+   * Whether the query an evaluator runs shows a ragged hierarchy's hidden
+   * members.
+   */
+  static boolean exposesPlaceholderMembers( mondrian.olap.Evaluator evaluator ) {
+    if ( evaluator == null || evaluator.getQuery() == null ) {
+      return false;
+    }
+    mondrian.olap.Connection c = evaluator.getQuery().getConnection();
+    return c instanceof RolapConnection
+      && ( (RolapConnection) c ).exposePlaceholderMembers;
   }
 
   @Override
@@ -823,7 +870,8 @@ public class RolapConnection extends ConnectionBase {
     assert role != null;
 
     this.role = role;
-    this.schemaReader = new RolapSchemaReader( role, schema );
+    this.schemaReader =
+      new RolapSchemaReader( role, schema, exposePlaceholderMembers );
   }
 
   public Role getRole() {

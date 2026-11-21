@@ -1175,7 +1175,14 @@ public class Query extends QueryPart {
         } else {
             role = null;
         }
-        final SchemaReader cubeSchemaReader = cube.getSchemaReader(role);
+        final Connection connection = getConnection();
+        final SchemaReader cubeSchemaReader =
+            cube instanceof mondrian.rolap.RolapCube
+                && connection instanceof mondrian.rolap.RolapConnection
+                && ((mondrian.rolap.RolapConnection) connection)
+                    .isExposePlaceholderMembers()
+            ? ((mondrian.rolap.RolapCube) cube).getSchemaReader(role, true)
+            : cube.getSchemaReader(role);
         return new QuerySchemaReader(cubeSchemaReader, Query.this);
     }
 
