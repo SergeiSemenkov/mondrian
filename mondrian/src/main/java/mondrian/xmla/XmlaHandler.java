@@ -871,6 +871,29 @@ public class XmlaHandler {
 
 
 
+    /**
+     * The xsi:type of a cell value in a multidimensional (MDX) ExecuteResponse. ValueInfo writes
+     * every int32 as xsd:integer, a Power BI workaround; Excel's OLAP slicer cannot read that
+     * type: it counts the level's members with a calculated member and never gets the count, so
+     * Slicers.Add fails with E_UNEXPECTED. Analysis Services answers xsd:int, so an MDX reply
+     * does too. DAX replies are tabular and keep ValueInfo's type.
+     */
+    public static String multidimensionalValueType(Object value) {
+        return multidimensionalValueType(new ValueInfo(null, value));
+    }
+
+    private static String multidimensionalValueType(ValueInfo vi) {
+        if (XSD_INTEGER.equals(vi.valueType) && vi.value instanceof Integer) {
+            return XSD_INT;
+        }
+        return vi.valueType;
+    }
+
+    /** The xsi:type ValueInfo gives a value with no data type, as a tabular (DAX) reply has it. */
+    public static String tabularValueType(Object value) {
+        return new ValueInfo(null, value).valueType;
+    }
+
     private static String computeXsd(SetType setType) {
         final StringWriter sw = new StringWriter();
         SaxWriter writer = new DefaultSaxWriter(new PrintWriter(sw), 3);
@@ -3289,7 +3312,7 @@ public class XmlaHandler {
                     //will always get real datatype (see ValueInfo logic)
                     final ValueInfo vi = new ValueInfo(null, value);
 
-                    final String valueType = vi.valueType;
+                    final String valueType = multidimensionalValueType(vi);
                     final String valueString;
                     if (vi.value instanceof Double && (Double)vi.value == Double.POSITIVE_INFINITY){
                         valueString = "INF";
