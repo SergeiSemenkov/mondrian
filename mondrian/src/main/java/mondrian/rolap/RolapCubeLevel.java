@@ -294,6 +294,34 @@ public class RolapCubeLevel extends RolapLevel {
         return closedPeerCubeLevel;
     }
 
+    /**
+     * The member a cell request is constrained by: for a member of a parent-child level with a
+     * closure table, its peer on the closed level, which stands for its whole subtree (the
+     * member itself included); any other member as it is. This is what
+     * {@link ParentChildLevelReaderImpl#constrainRequest} does for a single member; a set of
+     * members (Aggregate, a compound slicer) needs the same, or a distinct count over it counts
+     * the members themselves rather than the rows under them.
+     */
+    RolapCubeMember closedPeerMember(RolapCubeMember member) {
+        if (closedPeerCubeLevel == null
+            || member.isCalculated()
+            || member.getDataMember() == null)
+        {
+            // Not parent-child, or the data member itself: its own rows only.
+            return member;
+        }
+        RolapLevel closedPeerLevel = rolapLevel.getClosedPeer();
+        RolapMember wrappedMember =
+            new RolapMemberBase(
+                (RolapMember) closedPeerLevel.getHierarchy().getDefaultMember(),
+                closedPeerLevel,
+                member.getKey());
+        return new RolapCubeMember(
+            closedPeerCubeLevel.getHierarchy().getDefaultMember(),
+            wrappedMember,
+            closedPeerCubeLevel);
+    }
+
     public MemberFormatter getMemberFormatter() {
         return rolapLevel.getMemberFormatter();
     }

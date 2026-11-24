@@ -209,6 +209,9 @@ public class CompoundPredicateInfo {
         } else {
           tuple[i] = (RolapCubeMember) member;
         }
+        // A parent-child member stands for its subtree: constrain its closed peer, as a single
+        // member's cell request does (RolapCubeLevel.closedPeerMember).
+        tuple[i] = tuple[i].getLevel().closedPeerMember( tuple[i] );
         i++;
       }
 

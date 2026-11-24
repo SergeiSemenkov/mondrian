@@ -545,6 +545,13 @@ public class AggregateFunDef extends AbstractAggregateFunDef {
             Member parentMember,
             Cube baseCube)
         {
+            if (parentMember.getDataMember() != null) {
+                // A parent-child member has rows of its own (its data
+                // member) besides its children's, so all its children
+                // together are less than the member: {children of Sheri
+                // Nowmer} is 615 employees, Sheri Nowmer 616.
+                return false;
+            }
             return dimensionJoinsToBaseCube(
                 parentMember.getDimension(), baseCube)
                 || !parentMember.isAll();
