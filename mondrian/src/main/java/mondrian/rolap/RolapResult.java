@@ -453,6 +453,18 @@ public class RolapResult extends ResultBase {
         TupleList tupleList = TupleCollections.materialize( tupleIterable, true );
 
         this.slicerAxis = new RolapAxis( tupleList );
+        if ( tupleList.isEmpty() && query.slicerCalc != null && query.slicerCalc.getType() instanceof SetType
+            && !hasEmptySlicerMember( evaluator ) ) {
+          // The slicer is empty now, though it was not when its members were loaded: a set that
+          // depends on cell values (a TopCount, or Head(Order(...)) intersected with another set)
+          // has members in the loading pass, before the values are read. Then the axes were
+          // evaluated with no slicer at all, every row came back with empty cells -- a Power BI
+          // visual cross-filtered to nothing showed caption-only rows (T1.15-X1). Stand on the
+          // null members, as the loading pass does for a slicer that is empty from the start.
+          for ( Hierarchy hierarchy : ( (SetType) query.slicerCalc.getType() ).getHierarchies() ) {
+            evaluator.setContext( ( (RolapCubeHierarchy) hierarchy ).getNullMember() );
+          }
+        }
         // the slicerAxis may be overwritten during slicer execution
         // if there is a compound slicer. Save it so that it can be
         // reverted before completing result construction.
