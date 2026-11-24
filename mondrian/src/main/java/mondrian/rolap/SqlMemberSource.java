@@ -1125,11 +1125,30 @@ RME is this right
         if (!childLevel.getOrdinalExp().equals(childLevel.getKeyExp())) {
             ++columnOffset;
         }
+        final RolapMember dataMember =
+            parentChild ? (RolapMember) member.getDataMember() : null;
         for (int j = 0; j < properties.length; j++) {
             Property property = properties[j];
-            member.setProperty(
-                property.getName(),
-                getPooledValue(accessors.get(columnOffset + j).get()));
+            Object propertyValue =
+                getPooledValue(accessors.get(columnOffset + j).get());
+            member.setProperty(property.getName(), propertyValue);
+            if (dataMember != null) {
+                // The data member is the member's own rows, shown in its
+                // place: it has the member's properties, and the member's
+                // name as its caption, as the default data-member caption of
+                // Analysis Services is the parent's name. Without them it was
+                // captioned by its key ("1" for Sheri Nowmer). Not the name
+                // itself: that would give it the member's unique name.
+                if (!property.getName().equals(Property.NAME.name)) {
+                    dataMember.setProperty(property.getName(), propertyValue);
+                }
+            }
+        }
+        if (dataMember instanceof RolapMemberBase && captionValue == null) {
+            // The caption is what the member formatter makes of the caption
+            // value, which falls back to the name: give it the member's.
+            ((RolapMemberBase) dataMember).setCaptionValue(
+                ((RolapMemberBase) member).getCaptionValue());
         }
         cache.putMember(key, member);
         return member;

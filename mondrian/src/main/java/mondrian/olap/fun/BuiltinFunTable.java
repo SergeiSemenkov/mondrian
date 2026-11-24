@@ -339,7 +339,21 @@ public class BuiltinFunTable extends FunTableImpl {
                 return new AbstractMemberCalc(call, new Calc[] {memberCalc}) {
                     public Member evaluateMember(Evaluator evaluator) {
                         Member member = memberCalc.evaluateMember(evaluator);
-                        return member.getDataMember();
+                        Member dataMember = member.getDataMember();
+                        if (dataMember == null
+                            && member.getLevel() instanceof mondrian.rolap.RolapLevel
+                            && ((mondrian.rolap.RolapLevel) member.getLevel())
+                                .isParentChild()
+                            && !member.isAll()
+                            && !member.isCalculated())
+                        {
+                            // A parent-child member with no data member of
+                            // its own is one: its own rows are itself, as in
+                            // Analysis Services. A manager's own row shown in
+                            // Power BI read its Employee Salary blank.
+                            return member;
+                        }
+                        return dataMember;
                     }
                 };
             }
