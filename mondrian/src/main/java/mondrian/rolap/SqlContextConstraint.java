@@ -100,6 +100,10 @@ public class SqlContextConstraint
             return false;
         }
 
+        if (hasMultiMemberAggregate(context)) {
+            return false;
+        }
+
         // may return more rows than requested?
         if (!strict) {
             return true;
@@ -116,6 +120,43 @@ public class SqlContextConstraint
             }
         }
         return true;
+    }
+
+    /**
+     * Whether the context holds a calculated Aggregate member (not the slicer's own) over more than
+     * one member of a hierarchy. The SQL context constraint keeps one member per hierarchy
+     * (SqlConstraintUtils.makeContextConstraintSet), so such a member was read as its first member
+     * alone: a native NOT IsEmpty filter of cities under Aggregate({CA, WA, ...}) kept CA's cities
+     * only, and a Power BI Top N ranked within a page filter on the states lost every city outside
+     * the first state (T1.16-X2, 2026-11-24). The cells are right without native evaluation.
+     */
+    static boolean hasMultiMemberAggregate(Evaluator context) {
+        Member[] members = context.getMembers();
+        for (int i = 1; i < members.length; i++) {
+            Member member = members[i];
+            if (!member.isCalculated() || member.isMeasure()
+                || member instanceof RolapResult.CompoundSlicerRolapMember
+                || !SqlConstraintUtils.isSupportedCalculatedMember(member))
+            {
+                continue;
+            }
+            TupleConstraintStruct expanded = new TupleConstraintStruct();
+            SqlConstraintUtils.expandSupportedCalculatedMember(
+                member, context, expanded);
+            if (!expanded.getDisjoinedTupleLists().isEmpty()) {
+                return true;
+            }
+            Map<Hierarchy, Integer> perHierarchy = new HashMap<Hierarchy, Integer>();
+            for (Member m : expanded.getMembers()) {
+                Integer n = perHierarchy.get(m.getHierarchy());
+                n = n == null ? 1 : n + 1;
+                if (n > 1) {
+                    return true;
+                }
+                perHierarchy.put(m.getHierarchy(), n);
+            }
+        }
+        return false;
     }
 
     /**
